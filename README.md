@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-207%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -22,7 +22,7 @@
 | 策略工厂 | ✅ | `src/sandbox/factory.py` |
 | 沙箱镜像 | ✅ | `src/sandbox/image/Dockerfile` |
 | 真实容器集成测试（`-m docker`） | ✅ 17 项 | `tests/test_docker_integration.py` |
-| Schema 提取与成本控制 | ⬜ 未开始 | — |
+| Schema 提取与成本控制 | ✅ | `src/schema/extractor.py` |
 | 手写 Function Calling 循环 | ⬜ 未开始 | — |
 | 前端（代码区 + ECharts） | ⬜ 未开始 | — |
 
