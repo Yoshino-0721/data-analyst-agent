@@ -73,7 +73,15 @@ pytest
 
 # 端到端闭环演示：写错 → 结构化反馈 → 改好
 python scripts/demo_loop.py
+
+# 装了 Docker 之后：一条命令验证沙箱是否真的可用
+python scripts/check_docker.py           # 检查 + 跑隔离探针
+python scripts/check_docker.py --build   # 顺手构建沙箱镜像
 ```
+
+`check_docker.py` 会依次验证 CLI、daemon、镜像，然后真跑几个容器确认
+**隔离是否真的生效** —— 注意隔离探针是「**失败**才算对」：
+能写出文件、能联网，说明防护没生效。
 
 演示脚本会依次模拟三种情况并打印**回填给模型的完整 payload**：
 
