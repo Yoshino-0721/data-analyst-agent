@@ -6,6 +6,12 @@
 一个刻意的设计：**执行器与 LLM 客户端都是懒加载的**。
 模块导入时不构造它们，页面上传阶段也不需要。这样即使还没配 API Key，
 页面也能正常打开并把「缺 Key」以人话显示在界面上，而不是启动即崩。
+
+一个不起眼但很关键的细节：**所有异常都走 JSON 兜底**。Starlette 的默认
+ServerErrorMiddleware 在 DEBUG=False 时会返 21 字节纯文本 "Internal Server Error"，
+前端 `await resp.json()` 立刻抛 `SyntaxError`，UI 只能显示一段晦涩的
+"Unexpected token 'I', ..."。装一个 Exception 处理器后，任何未捕获异常
+都会被拍平成 `{"detail": "..."}` JSON，前端能稳定按统一协议处理。
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .agent.loop import AgentResult, run_agent
@@ -34,6 +40,28 @@ WEB_DIR = PROJECT_ROOT / "web"
 STORAGE_ROOT = PROJECT_ROOT / "storage" / "session"
 
 app = FastAPI(title="私人数据分析师 Agent", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+
+# ---------------------------------------------------------------- 全局异常兜底
+
+@app.exception_handler(Exception)
+def _unhandled_exception(_request, exc: Exception) -> JSONResponse:
+    """把任何逃过接口 try/except 的异常拍平成 JSON。
+
+    复盘：用户用真实 Excel 提问时偶发一个 500，Starlette 默认会把异常吞成
+    21 字节纯文本 "Internal Server Error"。浏览器 `await resp.json()` 立刻
+    抛 SyntaxError，UI 只能显示「Unexpected token 'I', "Internal S"...」。
+    看着像前端 bug，实际是后端返的不是 JSON。装上这个处理器后所有 5xx 都是
+    结构化 JSON，前端能稳定按 `detail` 字段显示人话。
+    """
+    # HTTPException 已经有自己的处理器，会先一步被 FastAPI 路由走；
+    # 但 RequestValidationError（pydantic 校验失败）等不会走 HTTPException，
+    # 它们默认也被这个兜底接住 —— 一并拍平。
+    logger.exception("未捕获异常：%s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"服务器内部错误：{exc!s}"[:500]},
+    )
 
 settings = Settings.from_env()
 session = Session(STORAGE_ROOT)

@@ -63,6 +63,32 @@ class Session:
     def __post_init__(self) -> None:
         for directory in (self.data_dir, self.artifacts_dir, self.runs_dir):
             directory.mkdir(parents=True, exist_ok=True)
+        self._restore_from_disk()
+
+    def _restore_from_disk(self) -> None:
+        """启动时把之前上传的数据恢复回会话状态。
+
+        服务重启后磁盘上的文件还在，但内存里的会话是新的 —— 不恢复的话
+        用户会看到「请先上传数据文件」，而他明明刚传过。这种「数据消失了」
+        的错觉比真的丢数据还让人困惑。
+        """
+        for path in sorted(self.data_dir.iterdir()):
+            name = path.name
+            # 跳过隐藏文件（含上传中途的 .incoming_* 临时文件）
+            if not path.is_file() or name.startswith("."):
+                continue
+            if path.suffix.lower() not in ALLOWED_SUFFIXES:
+                continue
+            try:
+                schema = extract_schema(path)
+            except SchemaError as exc:
+                logger.warning("恢复数据文件失败（跳过）：%s（%s）", name, exc)
+                continue
+            self.files.append(path)
+            self.schemas.append(schema)
+
+        if self.files:
+            logger.info("已从磁盘恢复 %d 个数据文件", len(self.files))
 
     # ---- 目录 ----
 

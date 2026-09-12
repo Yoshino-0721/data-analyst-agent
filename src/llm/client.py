@@ -89,6 +89,36 @@ def sanitize_messages(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]
     return cleaned
 
 
+def describe_messages(messages: Sequence[dict[str, Any]]) -> str:
+    """把消息序列画成一行行的诊断信息。
+
+    专门为「厂商报 messages 非法但不说哪里非法」这种场景准备：
+    逐条列出 role / 键 / tool 配对，肉眼就能看出结构错在哪。
+    """
+    lines = [f"messages（共 {len(messages)} 条）："]
+    open_ids: set[str] = set()
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        parts = [f"[{index:>2}] {role:<9}"]
+        if role == "assistant" and message.get("tool_calls"):
+            ids = [call.get("id") for call in message["tool_calls"]]
+            open_ids = {str(i) for i in ids}
+            parts.append(f"tool_calls={ids}")
+            parts.append(f"content={message.get('content')!r}")
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id"))
+            matched = call_id in open_ids
+            parts.append(f"tool_call_id={call_id} {'✓' if matched else '✗ 对不上任何 assistant'}")
+            content = message.get("content")
+            parts.append(f"content_len={len(content) if isinstance(content, str) else 'N/A'}")
+        else:
+            content = message.get("content")
+            parts.append(f"content_len={len(content) if isinstance(content, str) else content!r}")
+        parts.append(f"keys={sorted(message)}")
+        lines.append("  " + "  ".join(parts))
+    return "\n".join(lines)
+
+
 class ZhipuClient:
     """智谱 GLM 客户端（OpenAI 兼容接口）。
 
@@ -147,10 +177,21 @@ class ZhipuClient:
             kwargs["tools"] = list(tools)
             kwargs["tool_choice"] = "auto"
 
-        response = self._client.chat.completions.create(**kwargs)
+        try:
+            response = self._client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # 厂商说「messages 参数非法」时，光看异常是查不出所以然的 ——
+            # 必须把**结构**打出来：每条消息的 role、键、以及 tool 配对关系。
+            # 这几行日志是排查这类问题的唯一线索。
+            logger.error(
+                "对话请求失败：%s\n%s",
+                exc,
+                describe_messages(kwargs.get("messages", [])),
+            )
+            raise
+
         choice = response.choices[0]
         message = choice.message
-
         tool_calls = [
             ToolCall(
                 id=call.id,
@@ -166,6 +207,7 @@ class ZhipuClient:
 
 __all__ = [
     "AssistantMessage",
+    "describe_messages",
     "LLMClient",
     "ToolCall",
     "ZhipuClient",

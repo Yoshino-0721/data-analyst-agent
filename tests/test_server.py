@@ -28,9 +28,13 @@ from tests.conftest_agent import (
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    """每个测试用独立的 storage 目录，避免相互污染。"""
+    """每个测试用独立的 storage 目录，避免相互污染。
+
+    `raise_server_exceptions=False`：TestClient 默认会把服务端异常再抛一遍，
+    但我们就是要测「全局异常处理器是否把它拍平成 JSON」，所以关掉重抛。
+    """
     monkeypatch.setattr(server_module, "session", Session(tmp_path / "session"))
-    return TestClient(server_module.app)
+    return TestClient(server_module.app, raise_server_exceptions=False)
 
 
 @pytest.fixture
@@ -286,6 +290,39 @@ class TestSession:
         assert session.artifact_path("../../.env") is None
         assert session.artifact_path("missing.png") is None
 
+    def test_restores_files_after_restart(self, tmp_path):
+        """服务重启后，磁盘上已有的数据要自动恢复回会话。
+
+        不恢复的话用户会看到「请先上传数据文件」—— 而他明明刚传过。
+        这种「数据消失了」的错觉比真的丢数据还让人困惑。
+        """
+        first = Session(tmp_path / "s9")
+        first.replace_files([("a.csv", b"x\n1\n2\n")])
+
+        # 模拟进程重启：同一目录重新构造 Session
+        second = Session(tmp_path / "s9")
+        assert [f.name for f in second.files] == ["a.csv"]
+        assert [s.file_name for s in second.schemas] == ["a.csv"]
+        assert second.schemas[0].n_rows == 2
+
+    def test_restore_skips_hidden_temp_files(self, tmp_path):
+        """上传中途的隐藏临时文件不该被当成用户数据恢复出来。"""
+        session = Session(tmp_path / "s10")
+        session.replace_files([("a.csv", b"x\n1\n")])
+        (session.data_dir / ".incoming_abc_broken.csv").write_text("x", encoding="utf-8")
+
+        again = Session(tmp_path / "s10")
+        assert [f.name for f in again.files] == ["a.csv"]
+
+    def test_restore_skips_corrupt_files(self, tmp_path):
+        """磁盘上有读不了的文件时，只跳过它，不能让服务起不来。"""
+        session = Session(tmp_path / "s11")
+        session.replace_files([("good.csv", b"x\n1\n")])
+        (session.data_dir / "broken.xlsx").write_bytes(b"not an excel file")
+
+        again = Session(tmp_path / "s11")
+        assert [f.name for f in again.files] == ["good.csv"]
+
     def test_cleanup_failure_does_not_break_upload(self, tmp_path, monkeypatch):
         """清理动作失败绝不能让上传失败。
 
@@ -311,3 +348,44 @@ class TestSession:
         schemas = session.replace_files([("b.csv", b"y\n2\n")])
         assert [s.file_name for s in schemas] == ["b.csv"]
         assert [f.name for f in session.files] == ["b.csv"]
+
+
+# ------------------------------------------------------------------ 全局异常兜底
+
+
+class TestUncaughtExceptionHandler:
+    """任何逃过接口 try/except 的异常都必须以 JSON 返回 —— 否则浏览器会
+    把 21 字节的 "Internal Server Error" 当 JSON 解析，然后报一段
+    莫名其妙的「Unexpected token 'I', "Internal S"...」。真机踩过。
+    """
+
+    def test_unhandled_exception_returns_json_not_plain_text(self, loaded_client, monkeypatch):
+        from src.agent.loop import run_agent
+
+        def boom(*args, **kwargs):
+            # ValueError 不会被 ask() 里的 except RuntimeError 抓住 —— 必须确认
+            # 它能一路冒到全局处理器，最终落到 JSON 而不是 Starlette 的纯文本 500。
+            raise ValueError("boom from deep inside the loop")
+
+        # 必须把 executor / client 也塞成桩，否则 ask() 会先在 get_executor 上 503。
+        # 我们只想验证「运行循环里抛了非 RuntimeError」这一条路径。
+        class _FakeExecutor:
+            def available(self):
+                return True, ""
+
+        monkeypatch.setattr(server_module, "get_executor", lambda: _FakeExecutor())
+        monkeypatch.setattr(server_module, "get_client", lambda: object())
+        monkeypatch.setattr("src.server.run_agent", boom)
+
+        resp = loaded_client.post("/api/ask", json={"question": "随便问"})
+        # 关键：必须是 application/json，不能是 text/plain
+        assert resp.status_code == 500
+        assert resp.headers["content-type"].startswith("application/json")
+        body = resp.json()
+        assert "detail" in body, f"响应里没有 detail 字段：{body}"
+        assert "boom" in body["detail"], f"没把异常信息透出去：{body}"
+
+    def test_validation_error_is_also_json(self, loaded_client):
+        """pydantic 校验失败也要走 JSON，否则前端拿到的错误信息是 fragment HTML。"""
+        resp = loaded_client.post("/api/ask", json={"question": ""})  # min_length=1
+        assert resp.headers["content-type"].startswith("application/json")

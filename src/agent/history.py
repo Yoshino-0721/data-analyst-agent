@@ -80,9 +80,10 @@ def trim_history(
 
     策略：
       1. system 消息**永远完整保留**（里面是数据 Schema，丢了模型就开始瞎猜列名）；
-      2. 最后 keep_turns 个块无论如何都留 —— 越近的上下文越重要；
-      3. 再往前按预算加，超了就停；
-      4. 被丢掉的内容用一句话摘要替代，而不是凭空消失
+      2. **第一条 user 消息也永远保留** —— 理由见下方注释，这条是硬性要求；
+      3. 最后 keep_turns 个块无论如何都留 —— 越近的上下文越重要；
+      4. 再往前按预算加，超了就停；
+      5. 被丢掉的内容用一句话摘要替代，而不是凭空消失
          （凭空消失会让模型以为自己从没试过别的方案，于是再试一遍）。
 
     Args:
@@ -108,6 +109,17 @@ def trim_history(
     if orphans:
         logger.warning("裁剪时发现 %d 条无法配对的 tool 消息，已丢弃", orphans)
 
+    # 第一条 user 消息**不参与预算裁剪**。
+    #
+    # 它不是普通的一条历史 —— 它是「用户到底要什么」的唯一载体。
+    # 一旦被裁掉，剩下的消息会以 assistant(tool_calls) 开头，整个 messages
+    # 里再没有任何 user 角色。多数厂商（含智谱）要求 messages 必须由 user
+    # 开场，否则直接拒绝：实测报 `400 code 1214 messages 参数非法`，
+    # 而且这个错误发生在**多轮之后**，看起来跟裁剪毫无关系，极难定位。
+    pinned: list[dict[str, Any]] = []
+    if blocks and blocks[0] and blocks[0][0].get("role") == "user":
+        pinned = blocks.pop(0)
+
     # 从后往前累积：最近的 keep_turns 个块无条件保留，再往前的按预算
     kept: list[list[dict[str, Any]]] = []
     used = 0
@@ -125,7 +137,7 @@ def trim_history(
     result: list[dict[str, Any]] = list(system)
     if dropped > 0:
         result.append({"role": "system", "content": SUMMARY_TEMPLATE.format(count=dropped)})
-
+    result.extend(pinned)
     for block in kept:
         result.extend(block)
     return result

@@ -135,3 +135,39 @@ class TestTrimHistory:
         messages = [_system(), _user("a"), _assistant_with_tools("1"), _tool("call_1")]
         result = trim_history(messages, max_chars=100_000, keep_turns=10)
         assert len(result) == len(messages)
+
+    def test_first_user_message_survives_trimming(self):
+        """第一条 user 消息必须永远保留 —— 这条是硬性要求。
+
+        它是「用户到底要什么」的唯一载体。被裁掉之后，剩下的消息会以
+        assistant(tool_calls) 开头，整个 messages 里再无 user 角色，
+        厂商会直接拒绝：实测智谱报 `400 code 1214 messages 参数非法`。
+        阴险之处在于它发生在**多轮之后**，看起来跟裁剪毫无关系。
+        """
+        messages = [_system(), _user("分析一下销售额")]
+        for step in range(6):
+            messages.append(_assistant_with_tools(str(step)))
+            messages.append(_tool(f"call_{step}", "输出" * 300))
+
+        result = trim_history(messages, max_chars=200, keep_turns=1)
+
+        assert any(m.get("role") == "user" for m in result), (
+            "裁剪后没有 user 消息了 —— 请求会被厂商拒绝"
+        )
+        assert "分析一下销售额" in [
+            m.get("content") for m in result if m.get("role") == "user"
+        ]
+
+    def test_trimmed_history_always_starts_with_system_then_user(self):
+        """裁剪结果的第一条非 system 消息应当是 user。"""
+        messages = [_system(), _user("问题")]
+        for step in range(8):
+            messages.append(_assistant_with_tools(str(step)))
+            messages.append(_tool(f"call_{step}", "x" * 400))
+
+        result = trim_history(messages, max_chars=100, keep_turns=1)
+        non_system = [m for m in result if m.get("role") != "system"]
+        assert non_system, "不该裁到什么都不剩"
+        assert non_system[0].get("role") == "user", (
+            f"第一条非 system 消息是 {non_system[0].get('role')}，应为 user"
+        )
