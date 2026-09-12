@@ -316,12 +316,40 @@ def build_executor(config: Settings) -> Executor:
 
 ---
 
-## 8. 下一步
+## 8. 落地进度
 
-本文档与《沙箱执行威胁模型与流程图》确认后：
-1. 先落 `ExecutionResult` / `ExecStatus` / `Executor` 契约与它们的单测；
-2. 再落 `DockerExecutor`（含超时看护、归类、清洗）；
-3. 最后落 `LocalSubprocessExecutor` 与环境检查。
+契约已按上述顺序实现完成：
 
-前端沿用第一个项目的 HTML 基础，后续加两块：**代码展示区**（把模型生成的
-代码原样展示出来，让用户看得见它要跑什么）与 **ECharts 图表区**（渲染产物）。
+1. ✅ `src/sandbox/executor.py` —— `ExecStatus` / `ExecutionResult` /
+   `ExecutionRequest` / `ExecutorConfig` / `Executor` 协议
+2. ✅ `src/sandbox/analysis.py` —— 归类、traceback 清洗、输出截断、静态预检
+   （纯函数，全部用桩数据单测）
+3. ✅ `src/sandbox/docker_executor.py` —— 命令构造、超时看护、结果归类、
+   产物拷出、旧目录回收
+4. ✅ `src/sandbox/local_executor.py` —— 本地备选实现 + 环境硬检查
+5. ✅ `src/sandbox/factory.py` —— 策略选择（只读配置）
+6. ✅ `src/sandbox/image/Dockerfile` —— 沙箱镜像定义
+
+### 实现过程中修正的三处设计缺陷
+
+写代码时的实测把三个隐藏问题顶了出来，都已修掉并加了回归测试：
+
+1. **超时强杀链路会被环境因素带崩**：原本在 `TimeoutExpired` 分支里直接调
+   `docker rm -f`，若 docker 命令不存在会抛 `FileNotFoundError`，把 TIMEOUT
+   变成一次崩溃 —— 模型就会以为是自己代码崩了。现在清理步骤全部包在
+   try/except 里做**尽力而为**。已确定的超时事实不能被清理失败掩盖。
+2. **`-I` 隐含 `-E`**：原计划用 `PYTHONIOENCODING=utf-8` 保证中文可读，
+   但 `python -I`（隔离模式）会忽略所有 `PYTHON*` 环境变量，中文列名的报错
+   全变成问号 —— 模型看不到列名就永远修不对。改用命令行选项 `-X utf8=1`。
+3. **预检误伤合法读取**：原来的 `open('/` 粗暴匹配会把「读 `/data/销售.csv`」
+   也判为危险 —— 可数据本来就在那儿，不让读等于废掉整套系统。改成按挂载
+   点白名单判断：`/data` 与 `/out` 放行，其余绝对路径拒绝。
+
+### 下一步
+
+前端沿用第一个项目的 HTML 基础，加两块：**代码展示区**（把模型生成的代码
+原样展示，让用户看得见它要跑什么）与 **ECharts 图表区**（渲染产物）。
+上层编排（Schema 提取 + 手写 Function Calling 循环）尚未开始。
+
+跑 `python scripts/demo_loop.py` 可以看到「写错 → 结构化反馈 → 修好」的
+完整闭环演示。

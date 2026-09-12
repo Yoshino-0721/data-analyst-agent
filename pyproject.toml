@@ -1,0 +1,17 @@
+[project]
+name = "data-analyst-agent"
+version = "0.1.0"
+description = "基于 Function Calling 的私人数据分析师 Agent（沙箱执行层）"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+# 真实集成测试打 docker 标记，默认跳过（本机未装 Docker 也能跑完整测试）
+markers = [
+    "docker: 需要本机可用的 Docker daemon 与沙箱镜像",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
