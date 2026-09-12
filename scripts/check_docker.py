@@ -53,6 +53,21 @@ PROBES = [
         "print('销售额：120 元')",
         True,
     ),
+    (
+        "中文字体可用（matplotlib）",
+        [],
+        "import matplotlib.font_manager as fm\n"
+        "cjk = [f.name for f in fm.fontManager.ttflist if 'CJK' in f.name]\n"
+        "assert cjk, '没有 CJK 字体，图表里的中文会变方块'\n"
+        "import matplotlib\n"
+        "matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK JP'] + matplotlib.rcParams['font.sans-serif']\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.set_title('各地区销售额'); ax.set_xlabel('地区'); ax.set_ylabel('销售额')\n"
+        "fig.savefig('/tmp/chart.png')\n"
+        "print('CJK fonts:', len(cjk))",
+        True,
+    ),
 ]
 
 

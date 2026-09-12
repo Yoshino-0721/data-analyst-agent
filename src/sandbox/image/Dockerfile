@@ -16,6 +16,15 @@
 
 FROM python:3.13-slim
 
+# 中文字体（fonts-noto-cjk）。端到端实测发现：没装它时 matplotlib 画中文
+# 全是方块，模型得花一轮去排查字体、再把图表标签换成英文 —— 用户看到的
+# 图就永远是英文。装上字体把这个坑从根上填掉。
+# 换成清华源是构建加速；apt 层装完即清缓存，不进镜像层。
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 # 数据分析常用套件在开发期就要全装好 —— 容器 --network=none，
 # 跑起来之后装不了也查不了。
 RUN python -m pip install --no-cache-dir \
@@ -25,6 +34,28 @@ RUN python -m pip install --no-cache-dir \
         openpyxl==3.1.* \
         xlrd==2.0.* \
     && rm -rf /root/.cache/pip
+
+# 把 matplotlib 默认字体改成 Noto Sans CJK 系列 —— 装上字体只是第一步，
+# matplotlib 本身不知道。改它打包的 matplotlibrc 后所有 plt.xxx 才会自动
+# 选到中文字体，模型就不用每次都 plt.rcParams['font.family'] = '...' 了。
+# 顺手 axes.unicode_minus=False，否则负号会显示成方块。
+# 最后清掉 fontmanager 缓存，让它下次启动时重新扫描（包含刚装的 CJK 字体）。
+RUN python - <<'PYEOF'
+import os, re
+import matplotlib
+mpl_dir = os.path.join(os.path.dirname(matplotlib.__file__), 'mpl-data')
+rc_path = os.path.join(mpl_dir, 'matplotlibrc')
+text = open(rc_path).read()
+text = re.sub(r'^#\s*font\.family\s*:\s*sans-serif', 'font.family: sans-serif', text, flags=re.M)
+text = re.sub(
+    r'^#\s*font\.sans-serif\s*:[^\n]*',
+    'font.sans-serif: Noto Sans CJK JP, Noto Sans CJK SC, Noto Sans CJK TC, DejaVu Sans',
+    text, flags=re.M,
+)
+text = re.sub(r'^#\s*axes\.unicode_minus\s*:\s*True', 'axes.unicode_minus: False', text, flags=re.M)
+open(rc_path, 'w').write(text)
+PYEOF
+RUN fc-cache -fv 2>&1 | tail -1 && rm -rf /root/.cache/matplotlib
 
 # 与 ExecutorConfig.run_as_uid 对齐。这里只作存在性保证 ——
 # 真正的降权来自 docker run 的 --user=1000。
