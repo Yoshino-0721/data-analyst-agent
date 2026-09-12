@@ -330,21 +330,22 @@ class TestResultProcessing:
         assert "line 3" in result.stderr
         assert "KeyError" in result.stderr
 
-    def test_oom_uses_raw_stderr_for_detection(self, workspace):
-        """OOM 判定看**原始** stderr。
+    def test_oom_is_detected_from_exit_137_alone(self, workspace):
+        """137 本身足以判 OOM，不依赖 stderr 里有没有 "Killed"。
 
-        如果先清洗再判定，某些路径形态下的 "Killed" 可能被误伤，
-        OOM 就会被错判成普通运行错误，模型的修复方向就歪了。
+        真机上容器里没有 shell，`Killed` 这个词根本不会被打印出来，
+        实测 stderr 为空。判定必须能在没有 stderr 线索时依然成立。
         """
-        executor, _ = make_executor(RunOutcome(137, "", "Killed", False))
+        executor, _ = make_executor(RunOutcome(137, "", "", False))
         result = executor.execute(make_request(workspace))
         assert result.status is ExecStatus.OOM
         assert "内存" in result.hint
 
-    def test_exit_137_without_killed_marker_is_not_oom(self, workspace):
-        executor, _ = make_executor(RunOutcome(137, "", "some noise", False))
+    def test_memory_error_exception_path_is_also_oom(self, workspace):
+        """Python 接住 MemoryError 后正常退出（exit 1），也要认成 OOM。"""
+        executor, _ = make_executor(RunOutcome(1, "", "MemoryError: unable to allocate", False))
         result = executor.execute(make_request(workspace))
-        assert result.status is ExecStatus.RUNTIME_ERROR
+        assert result.status is ExecStatus.OOM
 
     def test_long_output_is_truncated_and_flagged(self, workspace):
         executor, _ = make_executor(RunOutcome(0, "x" * 5000, "", False))

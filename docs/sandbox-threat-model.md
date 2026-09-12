@@ -157,7 +157,7 @@
 │    按 exit_code / stderr 特征分五类，各自给模型不同的补救提示：        │
 │      OK            exit=0                    → 正常，附 stdout + 产物  │
 │      TIMEOUT       墙钟超时被强杀            → 建议：缩小数据量/去循环 │
-│      OOM           exit=137 + "Killed"       → 建议：分块处理/降内存   │
+│      OOM           exit=137（非超时）        → 建议：分块处理/降内存   │
 │      RUNTIME_ERROR exit=1 + Python traceback → 附**清洗后的**末段栈    │
 │      SANDBOX_ERROR 容器起不来/镜像缺失        → 属于环境问题，直接抛出  │
 │                                               不当作模型错误回填       │
@@ -196,9 +196,16 @@
 
 - 超时强杀后，`docker rm -f` 的退出码和容器自身被杀不能简单等同，因此
   **超时由宿主侧的计时器判定为主**，退出码 124 只是辅助标记。
-- OOM 时容器退出码为 137（SIGKILL），但 137 也可能来自其他强杀场景。
-  判定要用「137 + stderr 里出现 `Killed` 或 cgroup 记录」双重条件，
-  拿不准时归为 `RUNTIME_ERROR` 并附上原始 stderr，宁可信息多给一点。
+- OOM 时容器退出码为 137（SIGKILL）。设计阶段曾要求「137 + stderr 含
+  `Killed`」双条件，**真机跑起来后证明这条是错的**：`Killed` 是 shell
+  打印的，而这里是 `docker run` 直接起 python、没有 shell，实测 OOM 时
+  stderr 为空。判据改为「非超时的 137 即 OOM」——在 `docker run --rm`
+  场景下，非超时 SIGKILL 只可能来自 cgroup OOM killer（我们自己只在
+  超时时 kill，那时 `timed_out` 已是 True）。stderr 关键词改为兜住
+  Python 接住 `MemoryError` 后正常退出（exit 1）的那条路径。
+- 附带教训：判定词表里**不能放裸 `oom`**，子串匹配会把 `boom`/`room`/
+  `zoom` 一起吃进来，把普通运行错误误报成 OOM。只用完整短语或
+  `oom-kill` 这种带连字符的形式。
 
 ---
 

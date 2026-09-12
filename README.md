@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-140%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -21,6 +21,7 @@
 | 本地调试执行器 | ✅ | `src/sandbox/local_executor.py` |
 | 策略工厂 | ✅ | `src/sandbox/factory.py` |
 | 沙箱镜像 | ✅ | `src/sandbox/image/Dockerfile` |
+| 真实容器集成测试（`-m docker`） | ✅ 17 项 | `tests/test_docker_integration.py` |
 | Schema 提取与成本控制 | ⬜ 未开始 | — |
 | 手写 Function Calling 循环 | ⬜ 未开始 | — |
 | 前端（代码区 + ECharts） | ⬜ 未开始 | — |
@@ -43,7 +44,7 @@
 |---|---|---|
 | `OK` | 退出码 0 | — |
 | `TIMEOUT` | 宿主墙钟超时，**由外部计时器判定** | 代价太高，去优化数据量 |
-| `OOM` | 退出码 137 + stderr 含 `Killed` | 别一次性全读进内存 |
+| `OOM` | 退出码 137（非超时），或 stderr 出现内存类报错 | 别一次性全读进内存 |
 | `RUNTIME_ERROR` | 非零退出 / traceback | 去改代码（附清洗后的栈） |
 | `REJECTED` | 静态预检拦下，**没起容器** | 明确告知哪种写法不行 |
 | `SANDBOX_ERROR` | 镜像缺失 / daemon 不可达 | 不回填给模型（它改不了） |

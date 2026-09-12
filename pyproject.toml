@@ -6,10 +6,10 @@ requires-python = ">=3.13"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
-# 真实集成测试打 docker 标记，默认跳过（本机未装 Docker 也能跑完整测试）
+# 默认跑桩测试（快、无外部依赖）；真实容器验证用 `pytest -m docker`
+addopts = "-ra -m 'not docker'"
 markers = [
-    "docker: 需要本机可用的 Docker daemon 与沙箱镜像",
+    "docker: 需要本机可用的 Docker daemon 与沙箱镜像 data-analyst-sandbox:latest",
 ]
 
 [tool.ruff]

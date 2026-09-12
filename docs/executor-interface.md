@@ -330,9 +330,10 @@ def build_executor(config: Settings) -> Executor:
 5. ✅ `src/sandbox/factory.py` —— 策略选择（只读配置）
 6. ✅ `src/sandbox/image/Dockerfile` —— 沙箱镜像定义
 
-### 实现过程中修正的三处设计缺陷
+### 实现过程中修正的设计缺陷
 
-写代码时的实测把三个隐藏问题顶了出来，都已修掉并加了回归测试：
+写代码与真机验证把几个隐藏问题顶了出来，都已修掉并加了回归测试。
+前三条来自实现期，后两条是**真机跑起来之后才暴露的**，格外值得记：
 
 1. **超时强杀链路会被环境因素带崩**：原本在 `TimeoutExpired` 分支里直接调
    `docker rm -f`，若 docker 命令不存在会抛 `FileNotFoundError`，把 TIMEOUT
@@ -344,6 +345,36 @@ def build_executor(config: Settings) -> Executor:
 3. **预检误伤合法读取**：原来的 `open('/` 粗暴匹配会把「读 `/data/销售.csv`」
    也判为危险 —— 可数据本来就在那儿，不让读等于废掉整套系统。改成按挂载
    点白名单判断：`/data` 与 `/out` 放行，其余绝对路径拒绝。
+4. **OOM 的「双条件」判据是错的**（真机推翻）：原设计要求
+   「exit 137 **且** stderr 含 `Killed`」才算 OOM。但 `Killed` 是 **shell**
+   在子进程被 SIGKILL 时打印的，而这里是 `docker run` 直接起 python、
+   中间没有 shell —— 实测 OOM 时就是 `exit_code=137` + `stderr=""`。
+   按双条件会把 OOM 误判成 RUNTIME_ERROR，模型于是一头扎去改本来没写错的
+   代码，真正的解法（分块读取）被完全带偏。
+   **现判据**：非超时的 137 直接判 OOM（`docker run --rm` 场景下，
+   非超时 SIGKILL 只可能来自 cgroup OOM killer，我们自己只在超时时 kill，
+   而那时 `timed_out` 已是 True）；stderr 关键词改为兜住另一条路径 ——
+   Python 接住 `MemoryError` 后正常退出（exit 1）。
+5. **裸 `"oom"` 造成子串误伤**（真机推翻）：判定词表里放了裸 `oom`，
+   子串匹配一上就把 `boom` / `room` / `zoom` 全吃进来，任何含这类词的
+   普通报错都被报成 OOM。现在只用完整短语或带连字符的形式
+   （`out of memory`、`cannot allocate memory`、`oom-kill`）。
+
+### 真实集成测试
+
+`tests/test_docker_integration.py` 打标 `@pytest.mark.docker`，默认被
+`-m "not docker"` 跳过（CI/没装 Docker 的机器不受影响），需要时用
+`pytest -m docker` 单独跑。它不做配置检查，只做**实证**，覆盖：
+正常执行、中文可读、pandas 可用、traceback 清洗、四项隔离实证、最小权限挂载、
+超时强杀且无残留容器、OOM 归类、产物拷出、matplotlib 出图。
+
+其中隔离相关的用例都写成**两段式**，这个结构本身就是一条经验：
+
+> 静态预检挡在容器前面。如果只写「正常写法」的用例（如 `import socket`），
+> 实际验到的永远是预检，容器那层反而没人守、哪天坏了也不知道。
+> 所以每个风险点验两遍：先断言预检会拦，再用预检查不见的等价写法
+> （`importlib.import_module('soc' + 'ket')`、路径拼接）去撞容器，
+> 确认第二道门自己站得住。
 
 ### 下一步
 

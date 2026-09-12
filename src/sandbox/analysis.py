@@ -97,7 +97,17 @@ def _basename_paths(line: str) -> str:
 
 # cgroup OOM Kill 在 stderr 里通常没有任何 Python 输出，只有 Shell 层的 "Killed"；
 # Docker 也可能把容器层日志带出来
-_OOM_MARKERS = ("killed", "memoryerror", "out of memory", "oom")
+# 注意这里**不能**放裸 "oom" —— 子串匹配会把 "boom"/"room"/"zoom" 一起吃进来，
+# 任何含这类词的普通报错都会被误判成 OOM（实测 stderr="boom" 就中招了）。
+# 要么用完整短语，要么带连字符。
+_OOM_MARKERS = (
+    "killed",
+    "memoryerror",
+    "out of memory",
+    "cannot allocate memory",
+    "unable to allocate",
+    "oom-kill",
+)
 
 
 def classify_execution(
@@ -112,9 +122,17 @@ def classify_execution(
     属于「我们自己掌握的真相」，比 exit_code 可靠 —— 强杀之后容器/进程返回
     什么退出码并不稳定。所以超时优先，不用退出码去反推。
 
-    OOM 需要双条件（137 + stderr 特征）：137 也可能来自其他强杀场景。拿不准
-    时宁可归为 RUNTIME_ERROR 并附原始 stderr，让模型看到真实材料自己判断，
-    也好过一个自信但错误的分类把它带偏。
+    关于 OOM 判定，最初的设计要求「137 + stderr 里有 Killed」双条件，
+    **真机验证后证明这条是错的**：`Killed` 是 shell 在子进程被 SIGKILL 时打印的，
+    而这里是 `docker run` 直接起 python、中间没有 shell，cgroup OOM killer 杀掉进程后
+     stderr 完全是空的（实测 exit_code=137、stderr=""）。
+    按双条件就会把 OOM 误判成 RUNTIME_ERROR，模型会以为自己代码写错了去改代码，
+    实际该做的是分块读取 —— 方向彻底跑偏。
+
+    所以修正为：非超时的 137 直接判 OOM。在 `docker run --rm` 这个场景里，
+    非超时前提下的 SIGKILL 只可能来自 cgroup OOM killer（我们自己只在超时时 kill，
+    而那种情况 timed_out 已经是 True）。stderr 特征改为覆盖另一条路径：
+    Python 自己捕获到 MemoryError 后正常退出（exit 1），此时靠关键词识别。
     """
     if timed_out:
         return ExecStatus.TIMEOUT
@@ -122,10 +140,14 @@ def classify_execution(
     if exit_code == 0:
         return ExecStatus.OK
 
+    # 137 = 128 + SIGKILL。非超时被 SIGKILL，容器场景下就是内存超限。
     if exit_code == 137:
-        lowered = stderr.lower()
-        if any(marker in lowered for marker in _OOM_MARKERS):
-            return ExecStatus.OOM
+        return ExecStatus.OOM
+
+    # MemoryError 走 Python 异常路径退出（exit 1），只能靠 stderr 认出来。
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in _OOM_MARKERS):
+        return ExecStatus.OOM
 
     return ExecStatus.RUNTIME_ERROR
 

@@ -55,25 +55,45 @@ class TestClassifyExecution:
             is ExecStatus.TIMEOUT
         )
 
-    @pytest.mark.parametrize("stderr", ["Killed", "MemoryError", "out of memory"])
-    def test_oom_needs_exit_137_plus_marker(self, stderr: str):
-        """OOM 需双条件。单看 137 不够 —— 其他强杀场景也是 137。"""
+    @pytest.mark.parametrize("stderr", ["", "Killed", "MemoryError", "out of memory"])
+    def test_exit_137_is_oom_even_with_empty_stderr(self, stderr: str):
+        """非超时的 137 一律判 OOM，哪怕 stderr 是空的。
+
+        这是被真机推翻过一次的设计：容器里 `docker run` 直接起 python、
+        中间没有 shell，cgroup OOM killer 杀进程时没人往 stderr 写 "Killed"
+        （那个词是 shell 打印的）。实测就是 exit_code=137 + stderr=""。
+        当初要求「双条件」会让 OOM 被误判成 RUNTIME_ERROR，模型于是去改
+        本来没写错的代码，修复方向彻底跑偏。
+        """
         assert (
             classify_execution(exit_code=137, stderr=stderr, timed_out=False)
             is ExecStatus.OOM
         )
 
-    def test_exit_137_without_marker_falls_back_to_runtime_error(self):
-        """拿不准时宁可给模型原始 stderr，也好过一个自信的错误分类。"""
+    @pytest.mark.parametrize("stderr", ["MemoryError", "out of memory", "Cannot allocate memory"])
+    def test_memory_error_in_stderr_is_oom(self, stderr: str):
+        """Python 自己接住 MemoryError 时走正常退出（exit 1），靠关键词兜住。"""
         assert (
-            classify_execution(exit_code=137, stderr="something else", timed_out=False)
-            is ExecStatus.RUNTIME_ERROR
+            classify_execution(exit_code=1, stderr=stderr, timed_out=False)
+            is ExecStatus.OOM
         )
 
     @pytest.mark.parametrize("exit_code", [1, 2, 125, 126, 134, 139])
     def test_nonzero_exit_is_runtime_error(self, exit_code: int):
         assert (
             classify_execution(exit_code=exit_code, stderr="boom", timed_out=False)
+            is ExecStatus.RUNTIME_ERROR
+        )
+
+    @pytest.mark.parametrize("stderr", ["boom", "ZoomError", "no room left", "bloom filter failed"])
+    def test_words_containing_oom_are_not_oom(self, stderr: str):
+        """子串匹配的经典误伤：boom / room / zoom 里都含 "oom"。
+
+        真出过一次 —— 判定表里放了裸 "oom"，结果 stderr 只要出现这类词，
+        普通运行错误就被报成 OOM，模型跑去优化内存而不是修真正的 bug。
+        """
+        assert (
+            classify_execution(exit_code=1, stderr=stderr, timed_out=False)
             is ExecStatus.RUNTIME_ERROR
         )
 
