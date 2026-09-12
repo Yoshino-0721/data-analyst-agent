@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import sys
 import time
 from pathlib import Path
@@ -430,13 +432,63 @@ class TestRunCleanup:
         remaining = sorted(p.name for p in runs_root.iterdir())
         assert len(remaining) == 5
 
-    def test_prune_failure_does_not_break_execution(self, tmp_path):
+    def test_prune_failure_does_not_break_execution(self, tmp_path, monkeypatch):
         """清理失败不该把一次成功的执行变成失败 —— 磁盘多留几次记录
-        远好过丢结果。"""
-        executor, _ = make_executor(RunOutcome(0, "ok", "", False))
-        request = make_request(tmp_path / "run_x")
-        result = executor.execute(request)
-        assert result.status is ExecStatus.OK
+        远好过丢结果。
+
+        真机上踩到过：运行环境给删除操作挂了安全钩子，钩子判定需要人工确认
+        时直接抛 `SystemExit`（BaseException，逃得过 `ignore_errors=True`）。
+        当时的 except 分支里还写了个未定义的 logger，把「被忽略的清理失败」
+        升级成了 NameError —— 一次成功的执行就这么变成了 500。
+        """
+        import src.sandbox.docker_executor as executor_module
+
+        runs_root = tmp_path / "runs"
+        for index in range(8):
+            (runs_root / f"run_{index}").mkdir(parents=True)
+
+        def boom(*args, **kwargs):
+            raise SystemExit(1)
+
+        monkeypatch.setattr(executor_module.shutil, "rmtree", boom)
+        monkeypatch.setattr(executor_module, "_prune_warned", set())
+
+        # 不抛异常即为通过
+        _prune_old_runs(runs_root, keep=5)
+
+    def test_prune_warning_is_emitted_once(self, tmp_path, monkeypatch):
+        """回收被环境拦下是**持续状态**，不能每次执行都刷一遍日志。"""
+        import src.sandbox.docker_executor as executor_module
+
+        runs_root = tmp_path / "runs"
+        for index in range(8):
+            (runs_root / f"run_{index}").mkdir(parents=True)
+
+        def boom(*args, **kwargs):
+            raise SystemExit(1)
+
+        monkeypatch.setattr(executor_module.shutil, "rmtree", boom)
+        monkeypatch.setattr(executor_module, "_prune_warned", set())
+
+        warnings: list[str] = []
+
+        class Collector(logging.Handler):
+            def emit(self, record):
+                warnings.append(record.getMessage())
+
+        handler = Collector()
+        executor_module.logger.addHandler(handler)
+        try:
+            _prune_old_runs(runs_root, keep=5)
+            first_round = len(warnings)
+            assert first_round > 0, "第一次就应该产生警告"
+            _prune_old_runs(runs_root, keep=5)
+        finally:
+            executor_module.logger.removeHandler(handler)
+
+        assert len(warnings) == first_round, (
+            f"同一批目录不该重复警告：首轮 {first_round} 条，累计 {len(warnings)} 条"
+        )
 
     def test_zero_keep_skips_pruning(self, tmp_path):
         runs_root = tmp_path / "runs"

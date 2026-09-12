@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>私人数据分析师 Agent</title>
+<style>
+:root{
+  --bg:#f5f6f8;
+  --panel:#ffffff;
+  --panel-soft:#fafbfc;
+  --border:#e4e7ec;
+  --border-strong:#d3d8e0;
+  --text:#1f2329;
+  --text-soft:#5a6472;
+  --muted:#8a94a3;
+  --accent:#2563eb;
+  --accent-soft:#eff4ff;
+  --ok:#15803d;
+  --ok-soft:#e8f7ee;
+  --err:#c81e1e;
+  --err-soft:#fdecec;
+  --warn:#c2410c;
+  --warn-soft:#fef2e8;
+  --gray-soft:#eef0f3;
+  --code-bg:#1d2432;
+  --code-text:#d8dee9;
+  --radius:10px;
+  --radius-sm:6px;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 4px 12px rgba(16,24,40,.04);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;cursor:pointer}
+
+/* ---------- 顶栏 ---------- */
+header{
+  display:flex;align-items:center;gap:14px;
+  padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:10;
+}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.2px}
+.brand .sub{font-size:12px;color:var(--muted)}
+.spacer{flex:1}
+.status-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:4px 10px;border-radius:999px;font-size:12px;
+  background:var(--gray-soft);color:var(--text-soft);border:1px solid var(--border);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--ok)}
+.dot.bad{background:var(--err)}
+
+/* ---------- 主体布局 ---------- */
+main{
+  display:grid;grid-template-columns:minmax(320px,40fr) 60fr;
+  gap:16px;padding:16px;height:calc(100vh - 57px);
+}
+.pane{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:0;overflow:hidden;
+}
+.pane-head{
+  display:flex;align-items:center;gap:8px;
+  padding:11px 16px;border-bottom:1px solid var(--border);
+  font-weight:600;font-size:13px;color:var(--text-soft);
+}
+.pane-head .count{font-weight:400;color:var(--muted);font-size:12px}
+.pane-body{flex:1;overflow-y:auto;padding:16px;min-height:0}
+
+/* ---------- 上传区 ---------- */
+.drop{
+  border:1.5px dashed var(--border-strong);border-radius:var(--radius);
+  padding:18px;text-align:center;background:var(--panel-soft);
+  transition:.15s;cursor:pointer;margin-bottom:14px;
+}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop strong{display:block;font-size:13px;margin-bottom:2px}
+.drop span{font-size:12px;color:var(--muted)}
+
+.datasets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  background:var(--accent-soft);border:1px solid #d3e0fd;border-radius:var(--radius-sm);
+  font-size:12px;color:#1e40af;
+}
+.chip code{font-family:var(--mono);font-size:11.5px}
+
+/* ---------- 对话 ---------- */
+.msg{margin-bottom:14px;display:flex;flex-direction:column;gap:5px}
+.msg .who{font-size:11.5px;color:var(--muted);font-weight:600;letter-spacing:.3px}
+.bubble{
+  padding:10px 13px;border-radius:var(--radius);font-size:13.5px;white-space:pre-wrap;
+  word-break:break-word;
+}
+.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.msg.agent .bubble{background:var(--panel-soft);border:1px solid var(--border);border-bottom-left-radius:4px}
+.msg .bubble table{border-collapse:collapse;margin:8px 0;font-size:12.5px;width:100%}
+.msg .bubble th,.msg .bubble td{border:1px solid var(--border);padding:5px 9px;text-align:left}
+.msg .bubble th{background:var(--gray-soft);font-weight:600}
+.msg .bubble code{font-family:var(--mono);font-size:12px;background:var(--gray-soft);padding:1px 5px;border-radius:4px}
+.msg .bubble strong{font-weight:650}
+.inline-img{
+  display:block;max-width:100%;height:auto;margin:10px 0;
+  border:1px solid var(--border);border-radius:var(--radius-sm);background:#fff;
+  cursor:zoom-in;
+}
+
+.composer{border-top:1px solid var(--border);padding:12px 16px;background:var(--panel)}
+.composer form{display:flex;gap:9px}
+.composer textarea{
+  flex:1;resize:none;height:60px;padding:9px 11px;font:inherit;
+  border:1px solid var(--border-strong);border-radius:var(--radius-sm);
+  background:var(--panel);color:var(--text);outline:none;
+}
+.composer textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.composer button[type=submit]{
+  align-self:stretch;padding:0 20px;border:none;border-radius:var(--radius-sm);
+  background:var(--accent);color:#fff;font-weight:600;
+}
+.composer button[type=submit]:disabled{background:#b9c2d0;cursor:not-allowed}
+
+/* ---------- 执行轨迹 ---------- */
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:36px 20px;line-height:1.9}
+.trace{
+  border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;
+}
+.trace-head{
+  display:flex;align-items:center;gap:9px;padding:9px 13px;
+  background:var(--panel-soft);border-bottom:1px solid var(--border);font-size:12.5px;
+}
+.trace-head .idx{font-weight:650;color:var(--text-soft)}
+.badge{
+  padding:2px 8px;border-radius:999px;font-size:11px;font-weight:650;letter-spacing:.2px;
+}
+.badge.OK{background:var(--ok-soft);color:var(--ok)}
+.badge.RUNTIME_ERROR{background:var(--err-soft);color:var(--err)}
+.badge.TIMEOUT,.badge.OOM{background:var(--warn-soft);color:var(--warn)}
+.badge.REJECTED{background:var(--gray-soft);color:var(--text-soft)}
+.badge.SANDBOX_ERROR{background:#f3e8ff;color:#7e22ce}
+.badge.none{background:var(--gray-soft);color:var(--text-soft)}
+.badge.api{background:var(--accent-soft);color:#1e40af}
+
+.trace-body{padding:0}
+.block+.block{border-top:1px solid var(--border)}
+.block-label{
+  display:flex;align-items:center;gap:8px;padding:7px 13px;
+  font-size:11.5px;font-weight:650;color:var(--text-soft);letter-spacing:.3px;
+  background:var(--panel-soft);
+}
+.block-label .spacer{flex:1}
+.mini{
+  border:1px solid var(--border);background:var(--panel);border-radius:5px;
+  padding:2px 8px;font-size:11px;color:var(--text-soft);font-weight:500;
+}
+.mini:hover{border-color:var(--accent);color:var(--accent)}
+
+pre.code{
+  margin:0;padding:12px 14px;background:var(--code-bg);color:var(--code-text);
+  font-family:var(--mono);font-size:12.5px;line-height:1.65;overflow-x:auto;
+  max-height:340px;
+}
+pre.code.closed{display:none}
+.tok-kw{color:#c792ea}
+.tok-str{color:#c3e88d}
+.tok-num{color:#f78c6c}
+.tok-com{color:#7f8ea3;font-style:italic}
+
+pre.log{
+  margin:0;padding:11px 14px;background:var(--panel);font-family:var(--mono);
+  font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
+  max-height:280px;overflow:auto;color:var(--text);
+}
+pre.log.err{background:var(--err-soft);color:#8c1a1a}
+pre.log.closed{display:none}
+.hintbar{
+  display:flex;gap:8px;align-items:flex-start;padding:9px 13px;
+  background:var(--warn-soft);color:#8a4b0f;font-size:12.5px;border-top:1px solid #f6ddc4;
+}
+.hintbar .ic{font-weight:700}
+.artifacts{display:flex;flex-wrap:wrap;gap:10px;padding:12px 13px}
+.artifacts figure{margin:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:#fff}
+.artifacts img{display:block;max-width:min(100%,420px);height:auto;cursor:zoom-in}
+.artifacts figcaption{padding:5px 9px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.artifacts a{font-size:12px;color:var(--accent)}
+
+.thinking{display:flex;align-items:center;gap:9px;color:var(--text-soft);font-size:13px;padding:8px 0}
+.spinner{
+  width:14px;height:14px;border:2px solid var(--border-strong);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.alert{
+  padding:10px 13px;border-radius:var(--radius-sm);font-size:12.5px;margin-bottom:12px;
+  background:var(--err-soft);color:#8c1a1a;border:1px solid #f5c9c9;
+}
+.alert.warn{background:var(--warn-soft);color:#8a4b0f;border-color:#f6ddc4}
+
+@media (max-width:960px){
+  main{grid-template-columns:1fr;height:auto;grid-template-rows:minmax(420px,auto) auto}
+  .pane{max-height:none}
+  .pane-body{max-height:60vh}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>私人数据分析师 Agent</h1>
+    <span class="sub">模型自写代码 · Docker 沙箱执行 · 结果可追溯</span>
+  </div>
+  <div class="spacer"></div>
+  <span class="status-pill" id="env-status"><span class="dot" id="env-dot"></span><span id="env-text">检测中…</span></span>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="pane-head">
+      对话
+      <span class="spacer" style="flex:1"></span>
+      <button class="mini" id="reset-btn" type="button">清空数据</button>
+    </div>
+    <div class="pane-body" id="chat">
+      <div class="drop" id="drop">
+        <strong>拖拽 Excel / CSV 到这里，或点击选择</strong>
+        <span>支持 .csv .tsv .xlsx .xls —— 数据只读挂载进容器，不会被修改</span>
+        <input type="file" id="file-input" multiple accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden>
+      </div>
+      <div class="datasets" id="datasets"></div>
+      <div id="messages"></div>
+    </div>
+    <div class="composer">
+      <form id="ask-form">
+        <textarea id="question" placeholder="问点什么，比如：哪个地区销售额最高？画一张柱状图。" disabled></textarea>
+        <button type="submit" id="ask-btn" disabled>提问</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="pane">
+    <div class="pane-head">
+      执行轨迹
+      <span class="count" id="trace-count"></span>
+    </div>
+    <div class="pane-body" id="trace">
+      <div class="empty" id="trace-empty">
+        这里会显示模型写的每一段 Python 代码、<br>
+        在沙箱里的执行状态（OK / 超时 / 内存超限 / 报错），<br>
+        以及 stdout、清洗后的 traceback 和产出的图表。
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+/* ============================ 工具函数 ============================ */
+
+function escapeHtml(text){
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+const STATUS_LABEL = {
+  OK: "OK 执行成功",
+  RUNTIME_ERROR: "RUNTIME_ERROR 代码报错",
+  TIMEOUT: "TIMEOUT 执行超时",
+  OOM: "OOM 内存超限",
+  REJECTED: "REJECTED 预检拒绝",
+  SANDBOX_ERROR: "SANDBOX_ERROR 沙箱异常"
+};
+
+/* Python 极简语法高亮。
+   刻意不用 highlight.js —— 引一个 CDN 脚本意味着页面不再自包含，
+   而这个项目恰恰在讲「执行环境要可控」。分词扫描后逐段转义，
+   不做正则替换 HTML（那会引入嵌套与注入问题）。 */
+const PY_RE = new RegExp([
+  "(#[^\\n]*)",
+  "('''[\\s\\S]*?'''|\"\"\"[\\s\\S]*?\"\"\"|'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\")",
+  "\\b(def|class|import|from|return|if|elif|else|for|while|try|except|finally|with|as|in|not|and|or|is|None|True|False|lambda|yield|pass|break|continue|raise|global|assert|del|async|await|print)\\b",
+  "\\b(\\d+\\.?\\d*)\\b"
+].join("|"), "g");
+
+function highlightPython(code){
+  const source = String(code || "");
+  let html = "";
+  let last = 0;
+  PY_RE.lastIndex = 0;
+  let match;
+  while((match = PY_RE.exec(source)) !== null){
+    html += escapeHtml(source.slice(last, match.index));
+    const cls = match[1] ? "tok-com" : match[2] ? "tok-str" : match[3] ? "tok-kw" : "tok-num";
+    html += '<span class="' + cls + '">' + escapeHtml(match[0]) + "</span>";
+    last = match.index + match[0].length;
+  }
+  html += escapeHtml(source.slice(last));
+  return html;
+}
+
+/* 模型回答的极简 Markdown：标题、粗体、行内代码、表格、列表。
+   一律先 escape 再拼 HTML。 */
+function renderRich(text){
+  const lines = escapeHtml(text || "").split("\n");
+  let html = "";
+  let inTable = false;
+  let inList = false;
+
+  function closeBlocks(){
+    if(inTable){ html += "</tbody></table>"; inTable = false; }
+    if(inList){ html += "</ul>"; inList = false; }
+  }
+
+  for(let i = 0; i < lines.length; i++){
+    const line = lines[i];
+    const cells = line.trim().startsWith("|") ? line.trim().slice(1, -1).split("|") : null;
+
+    if(cells && cells.every(c => /^\s*:?-{2,}:?\s*$/.test(c))){
+      continue; // 表格分隔行
+    }
+    if(cells){
+      if(!inTable){
+        closeBlocks();
+        html += "<table><thead><tr>" + cells.map(c => "<th>" + inline(c.trim()) + "</th>").join("") + "</tr></thead><tbody>";
+        inTable = true;
+      }else{
+        html += "<tr>" + cells.map(c => "<td>" + inline(c.trim()) + "</td>").join("") + "</tr>";
+      }
+      continue;
+    }
+    if(inTable){ html += "</tbody></table>"; inTable = false; }
+
+    if(/^\s*[-*]\s+/.test(line)){
+      if(!inList){ html += "<ul>"; inList = true; }
+      html += "<li>" + inline(line.replace(/^\s*[-*]\s+/, "")) + "</li>";
+      continue;
+    }
+    if(inList){ html += "</ul>"; inList = false; }
+
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if(heading){
+      html += "<strong>" + inline(heading[2]) + "</strong><br>";
+      continue;
+    }
+    if(line.trim() === ""){
+      html += "<br>";
+      continue;
+    }
+    html += inline(line) + "<br>";
+  }
+  closeBlocks();
+  return html;
+}
+
+function inline(text){
+  return text
+    // 模型有时会在答案里写 ![](图名.png)。它不是凭空捏造 —— 图确实存在，
+    // 只是它自己看不到。这里把它转成真实的产物链接，而不是留一串裸文本。
+    // 文件名会被服务端做路径校验，前端这里只是拼 URL。
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, src) => {
+      const name = String(src).split(/[\\/]/).pop();
+      if(!name){ return match; }
+      return '<img class="inline-img" src="/api/artifact/' + encodeURIComponent(name)
+        + '" alt="' + alt + '" loading="lazy">';
+    })
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+/* ============================ 状态 ============================ */
+
+const state = { files: [], busy: false };
+
+const el = {
+  chat: document.getElementById("chat"),
+  messages: document.getElementById("messages"),
+  datasets: document.getElementById("datasets"),
+  trace: document.getElementById("trace"),
+  traceEmpty: document.getElementById("trace-empty"),
+  traceCount: document.getElementById("trace-count"),
+  drop: document.getElementById("drop"),
+  fileInput: document.getElementById("file-input"),
+  question: document.getElementById("question"),
+  askBtn: document.getElementById("ask-btn"),
+  form: document.getElementById("ask-form"),
+  resetBtn: document.getElementById("reset-btn"),
+  envDot: document.getElementById("env-dot"),
+  envText: document.getElementById("env-text")
+};
+
+/* ============================ 渲染 ============================ */
+
+function scrollChat(){ el.chat.scrollTop = el.chat.scrollHeight; }
+
+function addMessage(role, html){
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "user" ? "user" : "agent");
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = role === "user" ? "你" : "Agent";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.innerHTML = html;
+  wrap.appendChild(who);
+  wrap.appendChild(bubble);
+  el.messages.appendChild(wrap);
+  scrollChat();
+  return wrap;
+}
+
+function renderDatasets(){
+  el.datasets.innerHTML = state.files.map(f => {
+    const name = escapeHtml(f.name);
+    return '<span class="chip"><code>' + escapeHtml(f.path) + '</code>'
+      + '<span>' + f.rows + ' 行 × ' + f.cols + ' 列</span></span>';
+  }).join("");
+}
+
+function setBusy(busy){
+  state.busy = busy;
+  el.askBtn.disabled = busy || state.files.length === 0;
+  el.question.disabled = busy || state.files.length === 0;
+  if(!busy && state.files.length){ el.question.focus(); }
+}
+
+function statusBadge(status){
+  const key = status || "none";
+  // 没有 status 不代表「没跑过」 —— get_schema 这类本地工具根本不进沙箱，
+  // 给它贴一个失败或空转的标签会让人误以为出错。
+  const label = STATUS_LABEL[status] || (status ? status : "已返回");
+  return '<span class="badge ' + escapeHtml(key) + '">' + escapeHtml(label) + "</span>";
+}
+
+function block(label, contentHtml, extraButton){
+  const wrap = document.createElement("div");
+  wrap.className = "block";
+  const head = document.createElement("div");
+  head.className = "block-label";
+  head.innerHTML = "<span>" + escapeHtml(label) + "</span><span class=\"spacer\"></span>";
+  if(extraButton){ head.appendChild(extraButton); }
+
+  const toggle = document.createElement("button");
+  toggle.className = "mini";
+  toggle.type = "button";
+  toggle.textContent = "折叠";
+  head.appendChild(toggle);
+
+  const body = document.createElement("div");
+  body.innerHTML = contentHtml;
+
+  toggle.addEventListener("click", () => {
+    const pre = body.querySelector("pre");
+    if(!pre){ return; }
+    pre.classList.toggle("closed");
+    toggle.textContent = pre.classList.contains("closed") ? "展开" : "折叠";
+  });
+
+  wrap.appendChild(head);
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function renderStep(step){
+  const card = document.createElement("div");
+  card.className = "trace";
+
+  const head = document.createElement("div");
+  head.className = "trace-head";
+  head.innerHTML = '<span class="idx">#' + (step.index + 1) + "</span>"
+    + (step.calls || []).map(c => '<span class="badge api">' + escapeHtml(c.name) + "</span>").join("");
+  card.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "trace-body";
+
+  (step.calls || []).forEach(call => {
+    if(call.code){
+      const copy = document.createElement("button");
+      copy.className = "mini";
+      copy.type = "button";
+      copy.textContent = "复制";
+      copy.addEventListener("click", async () => {
+        try{
+          await navigator.clipboard.writeText(call.code);
+          copy.textContent = "已复制";
+          setTimeout(() => { copy.textContent = "复制"; }, 1200);
+        }catch(err){ copy.textContent = "复制失败"; }
+      });
+      body.appendChild(block(
+        "模型生成的 Python 代码",
+        '<pre class="code">' + highlightPython(call.code) + "</pre>",
+        copy
+      ));
+    }else if(call.name === "get_schema"){
+      body.appendChild(block(
+        "调用 get_schema" + (call.file_name ? "（" + escapeHtml(call.file_name) + "）" : ""),
+        '<pre class="log">工具调用：查询列信息</pre>'
+      ));
+    }
+  });
+
+  (step.outcomes || []).forEach(outcome => {
+    const statusRow = document.createElement("div");
+    statusRow.className = "block";
+    statusRow.innerHTML = '<div class="block-label"><span>执行结果</span><span class="spacer"></span>'
+      + statusBadge(outcome.status) + "</div>";
+    body.appendChild(statusRow);
+
+    if(outcome.stdout){
+      body.appendChild(block("stdout", '<pre class="log">' + escapeHtml(outcome.stdout) + "</pre>"));
+    }
+    if(outcome.stderr){
+      body.appendChild(block("stderr（清洗后的 traceback）",
+        '<pre class="log err">' + escapeHtml(outcome.stderr) + "</pre>"));
+    }
+    if(outcome.hint){
+      const hint = document.createElement("div");
+      hint.className = "hintbar";
+      hint.innerHTML = '<span class="ic">提示</span><span>' + escapeHtml(outcome.hint) + "</span>";
+      body.appendChild(hint);
+    }
+    if(outcome.artifacts && outcome.artifacts.length){
+      const box = document.createElement("div");
+      box.className = "artifacts";
+      outcome.artifacts.forEach(name => {
+        const figure = document.createElement("figure");
+        const img = document.createElement("img");
+        img.src = "/api/artifact/" + encodeURIComponent(name);
+        img.alt = name;
+        img.loading = "lazy";
+        const caption = document.createElement("figcaption");
+        caption.textContent = name;
+        figure.appendChild(img);
+        figure.appendChild(caption);
+        box.appendChild(figure);
+      });
+      body.appendChild(box);
+    }
+  });
+
+  card.appendChild(body);
+  return card;
+}
+
+function renderTrace(result){
+  el.trace.querySelectorAll(".trace").forEach(node => node.remove());
+  el.traceEmpty.style.display = "none";
+
+  (result.steps || []).forEach(step => el.trace.appendChild(renderStep(step)));
+
+  if(result.terminated_by && result.terminated_by !== "answer"){
+    const note = document.createElement("div");
+    note.className = "alert warn";
+    note.textContent = result.terminated_by === "max_steps"
+      ? "已达工具调用轮数上限，以上是模型的收尾回答。"
+      : "模型在同一处错误上反复失败，已强制收尾。";
+    el.trace.appendChild(note);
+  }
+  el.traceCount.textContent = (result.steps || []).length
+    ? "共 " + result.steps.length + " 轮"
+    : "";
+  el.trace.scrollTop = 0;
+}
+
+/* ============================ 交互 ============================ */
+
+async function refreshHealth(){
+  try{
+    const resp = await fetch("/api/health");
+    const data = await resp.json();
+    if(!data.has_api_key){
+      el.envDot.className = "dot bad";
+      el.envText.textContent = "未配置 API Key";
+    }else if(!data.executor_ok){
+      el.envDot.className = "dot bad";
+      el.envText.textContent = "沙箱不可用";
+    }else{
+      el.envDot.className = "dot ok";
+      el.envText.textContent = data.model + " · " + data.executor;
+    }
+  }catch(err){
+    el.envDot.className = "dot bad";
+    el.envText.textContent = "服务不可用";
+  }
+}
+
+async function uploadFiles(fileList){
+  if(!fileList || !fileList.length){ return; }
+  const form = new FormData();
+  Array.from(fileList).forEach(file => form.append("files", file));
+  el.datasets.innerHTML = '<span class="chip">正在解析数据…</span>';
+  try{
+    const resp = await fetch("/api/upload", {method: "POST", body: form});
+    const data = await resp.json();
+    if(!resp.ok){ throw new Error(data.detail || "上传失败"); }
+    state.files = data.files || [];
+    renderDatasets();
+    setBusy(false);
+    addMessage("agent", renderRich(
+      "已加载 **" + state.files.length + "** 个数据文件，可以开始提问了。\n"
+      + state.files.map(f => "- " + f.path + "（" + f.rows + " 行 × " + f.cols + " 列）").join("\n")
+    ));
+  }catch(err){
+    el.datasets.innerHTML = "";
+    renderDatasets();
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }
+}
+
+async function ask(question){
+  addMessage("user", escapeHtml(question));
+  const waiting = addMessage("agent", '<div class="thinking"><span class="spinner"></span>'
+    + "<span>正在写代码、在沙箱里执行…（可能要几十秒）</span></div>");
+  setBusy(true);
+
+  try{
+    const resp = await fetch("/api/ask", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({question: question})
+    });
+    const data = await resp.json();
+    if(!resp.ok){ throw new Error(data.detail || "执行失败"); }
+    waiting.remove();
+    renderTrace(data);
+    addMessage("agent", renderRich(data.answer || "（模型没有给出文本回答）"));
+  }catch(err){
+    waiting.remove();
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }finally{
+    setBusy(false);
+  }
+}
+
+el.drop.addEventListener("click", () => el.fileInput.click());
+el.fileInput.addEventListener("change", e => {
+  uploadFiles(e.target.files);
+  e.target.value = "";
+});
+["dragenter", "dragover"].forEach(evt =>
+  el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(evt =>
+  el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.remove("over"); }));
+el.drop.addEventListener("drop", e => {
+  if(e.dataTransfer && e.dataTransfer.files){ uploadFiles(e.dataTransfer.files); }
+});
+
+el.form.addEventListener("submit", e => {
+  e.preventDefault();
+  const question = el.question.value.trim();
+  if(!question || state.busy || !state.files.length){ return; }
+  el.question.value = "";
+  ask(question);
+});
+
+el.question.addEventListener("keydown", e => {
+  if(e.key === "Enter" && !e.shiftKey && !e.isComposing){
+    e.preventDefault();
+    el.form.requestSubmit();
+  }
+});
+
+el.resetBtn.addEventListener("click", async () => {
+  if(state.busy){ return; }
+  try{
+    await fetch("/api/reset", {method: "POST"});
+    state.files = [];
+    renderDatasets();
+    el.messages.innerHTML = "";
+    el.trace.querySelectorAll(".trace").forEach(n => n.remove());
+    el.traceEmpty.style.display = "block";
+    el.traceCount.textContent = "";
+    setBusy(false);
+  }catch(err){ /* 清空失败不阻塞使用 */ }
+});
+
+refreshHealth();
+setBusy(false);
+</script>
+</body>
+</html>

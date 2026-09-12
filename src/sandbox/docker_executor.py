@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 import time
@@ -28,6 +29,11 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
+
+logger = logging.getLogger(__name__)
+
+# 已经提醒过回收失败的目录，避免每次执行都刷同一条警告
+_prune_warned: set[str] = set()
 
 from .analysis import (
     clean_traceback,
@@ -441,6 +447,11 @@ def _prune_old_runs(runs_root: Path, *, keep: int) -> None:
 
     按修改时间排序。清理失败不影响结果 —— 磁盘上多留几次运行记录
     远好过因为清理异常把一次成功的执行变成失败。
+
+    注意 `ignore_errors=True` 只忽略 `OSError`：某些环境会在删除操作上挂
+    安全钩子（重定向回收站、批量删除限流），钩子判定需要人工确认时会直接
+    抛 `SystemExit` 中断进程 —— 那是 BaseException，逃过 ignore_errors。
+    所以这里再兜一层。
     """
     if keep <= 0 or not runs_root.is_dir():
         return
@@ -451,7 +462,17 @@ def _prune_old_runs(runs_root: Path, *, keep: int) -> None:
 
     stale = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[keep:]
     for directory in stale:
-        shutil.rmtree(directory, ignore_errors=True)
+        try:
+            shutil.rmtree(directory, ignore_errors=True)
+        except BaseException as exc:  # noqa: BLE001 —— 清理是附带动作，不能带崩主流程
+            # 每个目录只提醒一次：清理被环境拦下是持续状态，
+            # 每次执行都刷一遍日志只会淹没真正重要的信息。
+            key = str(directory)
+            if key not in _prune_warned:
+                _prune_warned.add(key)
+                logger.warning(
+                    "回收运行目录失败（忽略，不影响本次执行）：%s（%s）", directory, exc
+                )
 
 
 def _summarize(status: ExecStatus, result: ExecutionResult, duration_ms: int) -> str:

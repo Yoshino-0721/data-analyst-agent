@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-278%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-327%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -11,17 +11,32 @@
 
 ## 效果演示
 
-下面这张图是**真实端到端跑出来的产物**（真模型 + 真 Docker 沙箱）：给一个
-240 行的销售 CSV，问「哪个地区销售额最高？画一张柱状图」，模型自己写出
-pandas + matplotlib 代码、在容器里执行、把图落盘到 `/out` 并被拷回宿主机。
-全程零人工干预，图中标题/坐标轴/图例均为中文。
+下面这张是**真实运行截图**（真模型 + 真 Docker 沙箱 + 真前端）：
 
-![Agent 产出示例](docs/demo-chart.png)
+![界面效果](docs/demo-ui.png)
 
-跑一次看：
+左边是对话，右边是**执行轨迹**。轨迹区把这个 Agent 的底牌全摊开了：
+
+- **模型写的每一段 Python 代码原样展示**（带语法高亮和一键复制）——
+  这是用户信任的来源，也是这个项目最该被看见的部分；
+- 每一轮的**执行状态徽章**：`OK` 绿、`RUNTIME_ERROR` 红、
+  `TIMEOUT`/`OOM` 橙、`REJECTED` 灰，配 `stdout` 与清洗后的 traceback 折叠面板；
+- 截图这一轮里刚好出现了一次 **`REJECTED`**：模型写了段触发静态预检的代码，
+  被拦下（连容器都没起）、拿到拒绝原因后改写法并成功 —— 闭环的完整价值就在这一条上；
+- 产出的图表直接嵌在轨迹里。
+
+上面这张图是**产物本身**（模型自己写的 pandas + matplotlib 跑出来的）：
+
+![产物示例](docs/demo-chart.png)
+
+自己跑一遍：
 
 ```bash
 export ZHIPUAI_API_KEY=你的Key
+python -m uvicorn src.server:app --port 8000
+# 打开 http://127.0.0.1:8000 ，拖一份 CSV / Excel 进去
+
+# 或者不起服务，直接命令行端到端跑一次：
 python scripts/demo_agent.py
 ```
 
@@ -40,7 +55,7 @@ python scripts/demo_agent.py
 | 真实容器集成测试（`-m docker`） | ✅ 17 项 | `tests/test_docker_integration.py` |
 | Schema 提取与成本控制 | ✅ | `src/schema/extractor.py` |
 | 手写 Function Calling 循环 | ✅ | `src/agent/` |
-| 前端（代码区 + ECharts） | ⬜ 未开始 | — |
+| 前端（对话区 + 执行轨迹） | ✅ | `web/index.html` |
 
 ## 为什么错误分类是这个项目的地基
 

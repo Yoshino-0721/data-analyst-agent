@@ -115,6 +115,13 @@ class ToolOutcome:
     artifacts: tuple[str, ...] = ()
     """本次产出的文件名（只有文件名，不含宿主路径 —— 净化在 to_tool_payload 里做完了）。"""
 
+    # 以下三个是给**前端**用的结构化字段。
+    # 模型看的是 text（一段拼好的文本），前端要的是能分栏折叠的结构 ——
+    # 两者需要的东西不一样，所以同时保留，而不是让前端去解析文本。
+    stdout: str = ""
+    stderr: str = ""
+    hint: str = ""
+
 
 def failure_fingerprint(payload: dict[str, Any]) -> str | None:
     """给一次失败算指纹，用于识别「模型在撞同一堵墙」。
@@ -207,6 +214,9 @@ class ToolRuntime:
             # 注意键名是 artifacts（与 ExecutionResult.to_tool_payload 对齐），
             # 值已经过净化，只有文件名、不含宿主路径。
             artifacts=tuple(payload.get("artifacts") or ()),
+            stdout=str(payload.get("stdout") or ""),
+            stderr=str(payload.get("stderr") or ""),
+            hint=str(payload.get("hint") or ""),
         )
 
     # ---- get_schema ----
