@@ -9,6 +9,22 @@
 
 **核心在后端工程：执行隔离、异常分类、成本控制。** 不是一个 UI 套壳。
 
+## 效果演示
+
+下面这张图是**真实端到端跑出来的产物**（真模型 + 真 Docker 沙箱）：给一个
+240 行的销售 CSV，问「哪个地区销售额最高？画一张柱状图」，模型自己写出
+pandas + matplotlib 代码、在容器里执行、把图落盘到 `/out` 并被拷回宿主机。
+全程零人工干预，图中标题/坐标轴/图例均为中文。
+
+![Agent 产出示例](docs/demo-chart.png)
+
+跑一次看：
+
+```bash
+export ZHIPUAI_API_KEY=你的Key
+python scripts/demo_agent.py
+```
+
 ## 当前进度
 
 | 模块 | 状态 | 位置 |
@@ -23,7 +39,7 @@
 | 沙箱镜像 | ✅ | `src/sandbox/image/Dockerfile` |
 | 真实容器集成测试（`-m docker`） | ✅ 17 项 | `tests/test_docker_integration.py` |
 | Schema 提取与成本控制 | ✅ | `src/schema/extractor.py` |
-| 手写 Function Calling 循环 | ✅ |  |
+| 手写 Function Calling 循环 | ✅ | `src/agent/` |
 | 前端（代码区 + ECharts） | ⬜ 未开始 | — |
 
 ## 为什么错误分类是这个项目的地基
