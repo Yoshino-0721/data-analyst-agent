@@ -1,0 +1,28 @@
+# 环境与密钥（切勿提交真实值）
+.env
+
+# 运行期数据
+data/*
+!data/.gitkeep
+storage/
+tmp/
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 工作区记忆目录（不属于本仓库）
+.workbuddy/
