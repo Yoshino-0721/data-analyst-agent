@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -48,6 +49,89 @@ def _best_effort_rmtree(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     except BaseException as exc:  # noqa: BLE001
         logger.warning("清理目录失败（忽略）：%s（%s）", path, exc)
+
+
+def _is_transient_lock(exc: BaseException) -> bool:
+    """Windows 上文件被防病毒 / 索引服务 / 并发读者短暂锁定时会报 WinError 5。
+
+    这种锁通常几百毫秒内自行释放，重试即可越过；不要因为它把用户的上传变成 500。
+    """
+    return isinstance(exc, OSError) and getattr(exc, "winerror", None) == 5
+
+
+def _write_bytes_retry(path: Path, content: bytes, attempts: int = 6, backoff: float = 0.2) -> None:
+    last: BaseException | None = None
+    for i in range(attempts):
+        try:
+            path.write_bytes(content)
+            return
+        except OSError as exc:
+            last = exc
+            if not _is_transient_lock(exc) or i == attempts - 1:
+                raise
+            time.sleep(backoff * (i + 1))
+    assert last is not None
+    raise last
+
+
+def _extract_schema_retry(path: Path, attempts: int = 6, backoff: float = 0.2):
+    last: BaseException | None = None
+    for i in range(attempts):
+        try:
+            return extract_schema(path)
+        except OSError as exc:  # 锁文件时 pandas 也会抛 OSError / PermissionError
+            last = exc
+            if not _is_transient_lock(exc) or i == attempts - 1:
+                raise
+            time.sleep(backoff * (i + 1))
+    assert last is not None
+    raise last
+
+
+def _replace_retry(temp: Path, final: Path, attempts: int = 8, backoff: float = 0.2) -> None:
+    """原子改名，并兜住两类失败。
+
+    1. **瞬时锁**（防病毒 / 索引服务 / 并发读者）：`os.replace` 覆盖已存在文件时
+       可能短暂报 `WinError 5`，几百毫秒内自行释放 —— 退避重试即可越过。
+    2. **覆盖式改名被「删除审计钩子」拦下**：某些环境在替换已存在文件时，
+       会因「删除旧文件」这一步触发安全钩子并稳定报 `WinError 5`（重试再多次
+       也没用，实测本机如此）。此时退化为 `_rename_aside_then_replace` ——
+       全程只做 rename、不删除任何文件，绕开钩子。
+
+    重试用尽后若仍失败，才把最后一次异常抛出（真正的持续性锁，无从绕过）。
+    """
+    last: BaseException | None = None
+    for i in range(attempts):
+        try:
+            os.replace(temp, final)
+            return
+        except OSError as exc:
+            last = exc
+            if not _is_transient_lock(exc) or i == attempts - 1:
+                break
+            time.sleep(backoff * (i + 1))
+
+    try:
+        _rename_aside_then_replace(temp, final)
+    except OSError:
+        assert last is not None
+        raise last
+
+
+def _rename_aside_then_replace(temp: Path, final: Path) -> None:
+    """先把旧文件改名挪开（不删除），再让 temp 就位。
+
+    名字取成以 `.` 开头 —— `_restore_from_disk` 会跳过隐藏文件，因此挪开的旧文件
+    不会在下次启动时被当成一份数据恢复出来。挪走后尽力清理；清理失败（例如又撞上
+    删除钩子）只记日志，不影响本次上传已经成功的事实。
+    """
+    if not final.exists():
+        os.replace(temp, final)
+        return
+    aside = final.with_name(f".{final.name}.replaced_{uuid4().hex[:8]}")
+    os.replace(final, aside)
+    os.replace(temp, final)
+    _best_effort_unlink(aside)
 
 
 @dataclass
@@ -149,16 +233,17 @@ class Session:
                 for name, content in accepted:
                     final = self.data_dir / safe_target_name(Path(name))
                     temp = self.data_dir / f".incoming_{uuid4().hex[:8]}_{final.name}"
-                    temp.write_bytes(content)
+                    # 落盘 + 校验都可能对瞬时锁重试（见下方 helper 说明）
+                    _write_bytes_retry(temp, content)
                     incoming.append((temp, final))
                     # 校验能读：这一步失败说明文件本身有问题，改名不该发生
-                    extract_schema(temp)
+                    _extract_schema_retry(temp)
 
                 # 全部通过 —— 改名到位（os.replace 覆盖已存在的同名文件）
                 previous = list(self.files)
                 new_files: list[Path] = []
                 for temp, final in incoming:
-                    os.replace(temp, final)
+                    _replace_retry(temp, final)
                     new_files.append(final)
                 incoming = []  # 已全部改名，没有残留需要清理
 

@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-327%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-338%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -11,7 +11,8 @@
 
 ## 效果演示
 
-下面这张是**真实运行截图**（真模型 + 真 Docker 沙箱 + 真前端）：
+下面这张是**真实运行截图**（真模型 + 真前端；本机未启用容器隔离，
+因此这一轮用**本地调试执行器**跑，Docker 沙箱仍是默认实现）：
 
 ![界面效果](docs/demo-ui.png)
 
@@ -21,8 +22,9 @@
   这是用户信任的来源，也是这个项目最该被看见的部分；
 - 每一轮的**执行状态徽章**：`OK` 绿、`RUNTIME_ERROR` 红、
   `TIMEOUT`/`OOM` 橙、`REJECTED` 灰，配 `stdout` 与清洗后的 traceback 折叠面板；
-- 截图这一轮里刚好出现了一次 **`REJECTED`**：模型写了段触发静态预检的代码，
-  被拦下（连容器都没起）、拿到拒绝原因后改写法并成功 —— 闭环的完整价值就在这一条上；
+- 截图这一轮里出现了一次 **`RUNTIME_ERROR`**：模型第一次按容器路径读数据
+  没读到，从**清洗过的 traceback** 里看出真实原因、自己改对并继续 ——
+  异常分类 + 自纠闭环的价值就在这一条上；
 - 产出的图表直接嵌在轨迹里。
 
 上面这张图是**产物本身**（模型自己写的 pandas + matplotlib 跑出来的）：
