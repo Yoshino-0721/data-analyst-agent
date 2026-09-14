@@ -346,3 +346,52 @@ class TestSystemEndpoints:
         second = server_module.get_executor()
         assert first is not second
         assert first.describe() == second.describe()
+
+
+def test_reset_password_is_one_time(client, admin_h, alice):
+    """T7：管理员重置出来的口令是**一次性**的 —— 首登必须改密，改完才放行。
+
+    安全边界在闸门上，不在初始口令的强度上：所以这里不测"口令够不够强"，
+    而是测"拿到重置口令的人能不能绕开改密直接用系统"（答案是不能）。
+    """
+    reset = client.post(
+        f"/api/admin/users/{alice['user']['id']}/reset-password", json={}, headers=admin_h
+    )
+    assert reset.status_code == 200, reset.text
+    one_time = reset.json()["password"]
+
+    # ① 用一次性口令登录：能登录（登录本身不受闸门限制），但带着 must_change_password
+    login = client.post("/api/auth/login", json={"account": "alice", "password": one_time})
+    assert login.status_code == 200, login.text
+    assert login.json()["user"]["must_change_password"] is True
+    gated_token = login.json()["token"]
+
+    # ② 改密前访问业务接口 -> 403（闸门生效）
+    headers = {"Authorization": f"Bearer {gated_token}"}
+    assert client.get("/api/sessions", headers=headers).status_code == 403
+
+    # ③ 改密后 -> 放行
+    changed = client.post(
+        "/api/auth/change-password",
+        json={"old_password": one_time, "new_password": "Fresh-After-Reset-7z!Q"},
+        headers=headers,
+    )
+    assert changed.status_code == 200, changed.text
+    fresh = {"Authorization": f"Bearer {changed.json()['token']}"}
+    assert client.get("/api/sessions", headers=fresh).status_code == 200
+
+
+def test_reset_password_with_explicit_password_is_also_one_time(client, admin_h, alice):
+    """显式指定口令的那条路同样是一次性 —— 否则"管理员设的口令长期有效"这个口子还在。"""
+    reset = client.post(
+        f"/api/admin/users/{alice['user']['id']}/reset-password",
+        json={"password": "brandnew123"},
+        headers=admin_h,
+    )
+    assert reset.status_code == 200, reset.text
+
+    login = client.post("/api/auth/login", json={"account": "alice", "password": "brandnew123"})
+    assert login.status_code == 200, login.text
+    assert login.json()["user"]["must_change_password"] is True
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    assert client.get("/api/sessions", headers=headers).status_code == 403

@@ -165,6 +165,11 @@ def reset_password(
         new_password = "".join(secrets.choice(alphabet) for _ in range(10))
 
     target.password_hash = hash_password(new_password)
+    # 重置出来的是**一次性口令**：本人首登必须改密，与"管理员建号"完全一致。
+    # 安全边界在闸门上、不在初始口令的强度上 —— 所以这里不校验强度（那会破坏
+    # "管理员下发口头临时码"这个合理场景），而是把闸门关死：改密前除
+    # /api/auth/me 与改密接口外一律 403。
+    target.must_change_password = True
     # 重置口令同样要踢掉该用户已签发的 token —— 这条路径的存在理由就是
     # "凭据可能已经泄露"，那么旧 token 自然也不能再算数。
     target.token_version = int(target.token_version or 0) + 1

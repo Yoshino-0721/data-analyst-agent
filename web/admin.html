@@ -652,7 +652,8 @@ async function resetPassword(id, username) {
   try {
     const data = await api('/api/admin/users/' + id + '/reset-password', { method: 'POST', body: {} });
     openDrawer('重置密码成功', '<p>新密码只显示这一次，请立即转交用户：</p>' +
-      '<pre class="preview">' + escapeHtml(data.username) + '  /  ' + escapeHtml(data.password) + '</pre>');
+      '<pre class="preview">' + escapeHtml(data.username) + '  /  ' + escapeHtml(data.password) + '</pre>' +
+      '<p>该用户首次登录后必须先修改密码，改完才能使用其它功能。</p>');
   } catch (err) { toast(err.message, true); }
 }
 
