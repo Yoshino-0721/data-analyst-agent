@@ -11,7 +11,7 @@
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `bcefe88` | `master` `4adbf20` |
+| 分支 / HEAD | `main` `dedf84e` | `master` `6c72195` |
 | 测试 | **460 通过** | **651 通过**（17 deselected，Docker 集成默认跳过） |
 | 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**，`refs/remotes` 为空 | 无 remote |
 | 端口 | 8000 | 8123 |
@@ -115,7 +115,9 @@ powershell -ExecutionPolicy Bypass -File scripts/e2e_real.ps1 -Project p1
 在动任何代码之前，先确认"我接手的确实是同一份代码"：
 
 1. **对 HEAD**：`git log --oneline -5`（两个仓库各跑一次）—— HEAD 应当与本文档 §0
-   表格里的一致。不一致就先读那几条新 commit，别按旧状态动手。
+   表格里的一致。**唯一例外**：如果 `git log` 显示 HEAD 比表格新，且多出来的那几条
+   全是 `docs:` 前缀、只动了本文档，那也算一致（文档自己每改一次就会推进一次 HEAD，
+   否则这份自检清单会自我失效）。其余情况一律先读新 commit，别按旧状态动手。
 2. **对环境**：在各自仓库根目录跑一次全量测试（命令见 §4）—— 数字应当与 §0 一致
    （p1 460 / p2 651）。不一致说明代码或环境已经漂移，先查清楚再改，别在不确定的
    基线上做改动。
