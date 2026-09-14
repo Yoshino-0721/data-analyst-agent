@@ -499,3 +499,66 @@ def test_admin_pwd_flow_behaviour_assertions_pass():
         check=False,
     )
     assert result.returncode == 0, f"后台流程断言失败：\n{result.stdout}\n{result.stderr}"
+
+
+# ---------------------------------------------------------------- 深色页面的令牌一致性
+
+# 深色主题的两个页面（登录 / 后台）共用的令牌前缀
+DARK_SHARED_PREFIXES = ("--accent", "--surface", "--text")
+
+# 必须两边都有、且必须真的进入比对的令牌 —— 没有它这条守卫就可能空转（假绿）
+DARK_REQUIRED_TOKENS = (
+    "--accent",
+    "--accent-hover",
+    "--accent-soft",
+    "--surface",
+    "--surface-2",
+    "--text",
+    "--text-2",
+)
+
+
+def _root_tokens(page: str) -> dict:
+    """取页面 :root 里的令牌（名 -> 归一化后的值）。"""
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", read_page(page), re.S))
+    root = re.search(r":root\s*\{(.*?)\}", css, re.S)
+    assert root, f"{page} 页面没有 :root 令牌块"
+    tokens = {}
+    for name, value in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", root.group(1)):
+        tokens[name] = " ".join(value.split()).lower()
+    return tokens
+
+
+def test_dark_pages_share_the_same_accent_surface_text_tokens():
+    """login 与 admin 的强调色 / 底色 / 文字令牌必须同值。
+
+    这两个页面是同一个产品的**深色一套**，本该"一处改、两页同变"。但 pass 1 只改了
+    登录页的强调色，后台一直留着旧值 —— 直到目视评审才被发现，中间没有任何东西守着。
+    这条守卫补上那个缺口：它比对的是**解析出来的实际值**，不是硬编码的期望色，
+    所以以后调色只需改页面，不用改测试。
+    """
+    login = _root_tokens("login")
+    admin = _root_tokens("admin")
+
+    shared_names = {
+        name
+        for name in (set(login) & set(admin))
+        if name.startswith(DARK_SHARED_PREFIXES)
+    }
+
+    # 先确认比对不是空转：核心令牌必须真的在集合里
+    for name in DARK_REQUIRED_TOKENS:
+        assert name in shared_names, (
+            f"{name} 应当同时定义在 login 与 admin 的 :root 里 —— "
+            "缺了它，这条守卫就少守一块（别让它悄悄空转）"
+        )
+
+    mismatched = {
+        name: (login[name], admin[name])
+        for name in sorted(shared_names)
+        if login[name] != admin[name]
+    }
+    assert not mismatched, (
+        "深色页面（login vs admin）的令牌不一致："
+        + "；".join(f"{k}: {v[0]} != {v[1]}" for k, v in mismatched.items())
+    )
