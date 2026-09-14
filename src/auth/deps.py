@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session as OrmSession
@@ -18,6 +18,11 @@ from src.auth.security import decode_token
 
 # auto_error=False：请求没带 Authorization 时返回 None，由我们统一给 JSON 401
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+# 「必须先改密」期间仍然放行的两个路径：查自己、改密本身。其余一律 403。
+# 用路径白名单而不是"给某些接口少挂依赖"，是为了**默认拒绝** —— 以后新增
+# 接口忘了考虑这条，它自动就是被拦住的，不会变成漏网之鱼。
+_PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({"/api/auth/me", "/api/auth/change-password"})
 
 
 def get_db() -> OrmSession:
@@ -30,6 +35,7 @@ def get_db() -> OrmSession:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     db: OrmSession = Depends(get_db),
 ) -> User:
@@ -58,6 +64,16 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="账号已被禁用，请联系管理员",
+        )
+    # 系统生成的初始口令只够"证明你是本人"，不够继续用 —— 改密前不放行任何操作。
+    if (
+        user.must_change_password
+        and request.url.path not in _PASSWORD_CHANGE_EXEMPT_PATHS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该账号使用的是系统生成的初始口令，请先修改密码："
+            "POST /api/auth/change-password",
         )
     return user
 

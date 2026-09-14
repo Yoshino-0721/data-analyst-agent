@@ -11,7 +11,12 @@ from sqlalchemy import select
 from src.auth import db as auth_db
 from src.auth.models import User
 from src.auth.security import create_token, decode_token, hash_password, verify_password
-from tests.conftest import admin_headers, auth_headers, register_and_login
+from tests.conftest import (
+    TEST_ADMIN_PASSWORD,
+    admin_headers,
+    auth_headers,
+    register_and_login,
+)
 
 
 # ---------------------------------------------------------------- 口令哈希
@@ -292,17 +297,23 @@ class TestChangePassword:
 
 
 class TestDefaultAdmin:
-    def test_fresh_db_bootstraps_default_admin(self, client):
-        """conftest 里 init_db 建的是全新库 —— admin 应当已被引导创建。"""
+    def test_fresh_db_bootstraps_admin(self, client):
+        """conftest 里 init_db 建的是全新库 —— admin 应当已被引导创建。
+
+        口令由 ADMIN_PASSWORD 显式提供（见 conftest），所以**不**强制改密。
+        """
         response = client.post(
-            "/api/auth/login", json={"account": "admin", "password": "admin123"}
+            "/api/auth/login",
+            json={"account": "admin", "password": TEST_ADMIN_PASSWORD},
         )
         assert response.status_code == 200
         assert response.json()["user"]["role"] == "admin"
+        assert response.json()["user"]["must_change_password"] is False
 
     def test_admin_env_override(self, tmp_path, monkeypatch):
+        strong = "Boss-Override-9x!"
         monkeypatch.setenv("ADMIN_USERNAME", "boss")
-        monkeypatch.setenv("ADMIN_PASSWORD", "s3cret-pass")
+        monkeypatch.setenv("ADMIN_PASSWORD", strong)
         monkeypatch.setenv("ADMIN_EMAIL", "boss@example.com")
 
         auth_db.init_db(tmp_path / "override.db")
@@ -312,7 +323,9 @@ class TestDefaultAdmin:
                 admin = db.scalar(select(User).where(User.username == "boss"))
                 assert admin is not None
                 assert admin.role == "admin"
-                assert verify_password("s3cret-pass", admin.password_hash)
+                assert verify_password(strong, admin.password_hash)
+                # 口令是外部显式给的，不强制改密
+                assert admin.must_change_password is False
         finally:
             auth_db.dispose_engine()
 
@@ -328,11 +341,20 @@ class TestDefaultAdmin:
         finally:
             auth_db.dispose_engine()
 
-    def test_default_password_logs_warning(self, tmp_path, caplog):
-        with caplog.at_level(logging.WARNING, logger="src.auth.db"):
-            auth_db.init_db(tmp_path / "warn.db")
+    def test_explicit_admin_password_is_used_and_not_forced_to_change(
+        self, tmp_path, caplog
+    ):
+        """显式给了强口令：用它，且不强制改密。
+
+        （"没给口令时生成随机强口令 + 强制改密"以及"弱口令拒绝启动"这两条
+        由 tests/test_auth_security.py 专门覆盖。）
+        """
+        with caplog.at_level(logging.INFO, logger="src.auth.db"):
+            auth_db.init_db(tmp_path / "explicit.db")
         try:
-            assert any("admin123" in record.message for record in caplog.records)
+            assert any("ADMIN_PASSWORD" in record.getMessage() for record in caplog.records)
+            # 固定默认口令必须彻底消失
+            assert not any("admin123" in record.getMessage() for record in caplog.records)
         finally:
             auth_db.dispose_engine()
 

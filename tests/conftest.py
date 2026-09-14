@@ -40,6 +40,14 @@ def fast_bcrypt(monkeypatch):
     yield
 
 
+# 测试期统一使用的管理员口令（理由同 rag-knowledge-base 的同名常量）：
+# 满足强口令要求，且由 ADMIN_PASSWORD **显式提供** —— 引导出来的管理员
+# `must_change_password=False`，不会被"必须先改密"的硬闸门拦住，否则所有
+# 调用管理接口的既有用例都会 403。强制改密那条链路由
+# tests/test_auth_security.py 用"不设 ADMIN_PASSWORD"专门覆盖。
+TEST_ADMIN_PASSWORD = "Unit-Test-Admin-9x!"
+
+
 @pytest.fixture(autouse=True)
 def isolated_auth_db(tmp_path_factory, monkeypatch, fast_bcrypt):
     """每个用例独享一个全新 SQLite，绝不让测试碰到真实的 storage/app.db。
@@ -51,6 +59,7 @@ def isolated_auth_db(tmp_path_factory, monkeypatch, fast_bcrypt):
     from src.auth import db as auth_db
 
     monkeypatch.setenv("JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("ADMIN_PASSWORD", TEST_ADMIN_PASSWORD)
     auth_db.init_db(tmp_path_factory.mktemp("authdb") / "auth.db")
     yield
     auth_db.dispose_engine()
@@ -111,9 +120,10 @@ def register_and_login(client, username="alice", email=None, password="secret123
 
 
 def admin_headers(client) -> dict:
-    """默认管理员（引导创建的 admin/admin123）登录后的请求头。"""
+    """引导创建的管理员登录后的请求头（口令见 TEST_ADMIN_PASSWORD）。"""
     response = client.post(
-        "/api/auth/login", json={"account": "admin", "password": "admin123"}
+        "/api/auth/login",
+        json={"account": "admin", "password": TEST_ADMIN_PASSWORD},
     )
     assert response.status_code == 200, response.text
     return auth_headers(response.json()["token"])

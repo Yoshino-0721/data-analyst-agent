@@ -33,6 +33,11 @@ class User(Base):
     # user：只能操作自己的数据；admin：可管理全站
     role: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # 自动生成初始口令的账号（例如首次启动引导出来的管理员）置 True：
+    # 在改密之前，除 /api/auth/me 与改密接口外一律 403。见 deps.get_current_user。
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

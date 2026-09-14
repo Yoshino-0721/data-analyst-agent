@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session as OrmSession
 
 from src.auth.deps import get_current_user, get_db
 from src.auth.models import User
-from src.auth.security import create_token, hash_password, verify_password
+from src.auth.security import (
+    create_token,
+    hash_password,
+    password_strength_problem,
+    verify_password,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -49,6 +54,8 @@ def user_payload(user: User) -> dict:
         "email": user.email,
         "role": user.role,
         "is_active": user.is_active,
+        # 前端据此把用户按在"改密"这一步上（服务端另有硬闸门，见 deps）
+        "must_change_password": user.must_change_password,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -130,6 +137,17 @@ def change_password(
             detail="原密码不正确",
         )
 
+    # 被强制改密的账号（用的是系统生成的初始口令）必须换成强口令 ——
+    # 否则"随机强口令 + 强制修改"这条链会被一次改成 `123456` 直接绕过。
+    if user.must_change_password:
+        problem = password_strength_problem(payload.new_password)
+        if problem is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"新密码不满足强度要求（{problem}）",
+            )
+
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
     db.commit()
     return {"ok": True}

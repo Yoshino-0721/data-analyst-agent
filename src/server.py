@@ -47,6 +47,7 @@ from .auth.api import router as auth_router
 from .auth.db import init_db
 from .auth.deps import get_current_user, get_db
 from .auth.models import ChatSession, Dataset, Message, User
+from .auth.security import verify_security_config
 from .config import settings
 from .datasets import dataset_payload, delete_dataset, sync_datasets
 from .llm.client import ZhipuClient
@@ -63,7 +64,10 @@ WEB_DIR = PROJECT_ROOT / "web"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # 建库 + 默认管理员引导（幂等）。测试不跑 lifespan，由 fixture 自行初始化。
+    # 启动自检先行：生产环境（APP_ENV != dev）没注入 JWT_SECRET 就拒绝启动，
+    # 而不是等第一个用户登录才炸。见 src/auth/security.py。
+    verify_security_config()
+    # 建库 + 管理员引导（幂等）。测试不跑 lifespan，由 fixture 自行初始化。
     init_db()
     yield
 
