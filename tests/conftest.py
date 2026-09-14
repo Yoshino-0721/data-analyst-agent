@@ -49,6 +49,23 @@ TEST_ADMIN_PASSWORD = "Unit-Test-Admin-9x!"
 
 
 @pytest.fixture(autouse=True)
+def open_registration_and_clear_throttle(monkeypatch):
+    """测试期放开自助注册、并清空登录节流状态。
+
+    这两条默认值（注册默认关闭、登录失败到阈值锁定）都会让**既有用例互相干扰**：
+    注册会直接 403；某个用例故意试错几次，后面的用例就会被锁在 429 上。
+    针对这两条本身的用例在 tests/test_auth_throttle.py 里把它们单独调回来 ——
+    默认值仍保持"关闭 / 开启节流"，测试期只是显式地打开它。
+    """
+    from src.auth import throttle
+
+    monkeypatch.setattr(settings, "allow_registration", True)
+    throttle.reset()
+    yield
+    throttle.reset()
+
+
+@pytest.fixture(autouse=True)
 def isolated_auth_db(tmp_path_factory, monkeypatch, fast_bcrypt):
     """每个用例独享一个全新 SQLite，绝不让测试碰到真实的 storage/app.db。
 

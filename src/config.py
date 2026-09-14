@@ -82,6 +82,12 @@ class Settings:
     # ⚠️ 不要为了和项目一的 `app_env` 对齐而新增同义字段 —— 两个真相来源会让
     # 「APP_ENV=production 但 local 执行器仍被放行」这类分叉静默发生。
     env: str = "dev"
+    # 是否允许自助注册。**默认关闭**：公网部署下，任何人注册成功都会消耗站点共用的
+    # API Key 额度（上传文档要 embedding、提问要 chat）。开通成员时临时设为 true。
+    allow_registration: bool = False
+    # 登录节流：同一账号连续失败 N 次后锁定 M 秒（见 src/auth/throttle.py）
+    login_max_failures: int = 5
+    login_lock_seconds: int = 300
     executor_config: ExecutorConfig = field(default_factory=ExecutorConfig)
 
     # --- 路径 ---
@@ -111,6 +117,12 @@ class Settings:
             history_keep_turns=_read_int("HISTORY_KEEP_TURNS", 4),
             executor=os.environ.get("EXECUTOR", "docker").strip() or "docker",
             env=os.environ.get("APP_ENV", "dev").strip() or "dev",
+            allow_registration=os.environ.get("ALLOW_REGISTRATION", "")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"},
+            login_max_failures=_read_int("LOGIN_MAX_FAILURES", 5),
+            login_lock_seconds=_read_int("LOGIN_LOCK_SECONDS", 300),
             storage_root=Path(
                 os.environ.get("STORAGE_DIR", "").strip()
                 or str(Path(__file__).resolve().parent.parent / "storage")

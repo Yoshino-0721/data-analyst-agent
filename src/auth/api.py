@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session as OrmSession
 
+from src.auth import throttle
 from src.auth.deps import get_current_user, get_db
 from src.auth.models import User
 from src.auth.security import (
@@ -21,6 +22,7 @@ from src.auth.security import (
     password_strength_problem,
     verify_password,
 )
+from src.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -75,6 +77,15 @@ def _register_validations(payload: RegisterRequest) -> None:
 
 @router.post("/register")
 def register(payload: RegisterRequest, db: OrmSession = Depends(get_db)) -> dict:
+    if not settings.allow_registration:
+        # 默认关闭：公网部署下，任何人注册成功都会消耗**站点共用**的 API Key 额度
+        # （上传文档要 embedding、提问要 chat）。开通成员请管理员在服务端设置
+        # ALLOW_REGISTRATION=true 后重启。
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="本站已关闭自助注册，请联系管理员开通账号",
+        )
+
     _register_validations(payload)
 
     existing = db.scalar(
@@ -101,22 +112,45 @@ def register(payload: RegisterRequest, db: OrmSession = Depends(get_db)) -> dict
 
 @router.post("/login")
 def login(payload: LoginRequest, db: OrmSession = Depends(get_db)) -> dict:
+    """登录。失败到阈值会短暂锁定该账号，期间一律 429。"""
+    waiting = throttle.locked_seconds_remaining(payload.account)
+    if waiting:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"登录失败次数过多，请 {waiting} 秒后再试",
+            headers={"Retry-After": str(waiting)},
+        )
+
     user = db.scalar(
         select(User).where(
             or_(User.username == payload.account, User.email == payload.account.lower())
         )
     )
     if user is None or not verify_password(payload.password, user.password_hash):
+        locked_for = throttle.record_failure(payload.account)
+        if locked_for:
+            # 触发锁定的**这一次**就直接 429：语义清楚，也让"到底锁没锁上"可观测。
+            # 这条分支只在"凭据错误"时才会到达，所以它不泄露任何口令信息。
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录失败次数过多，请 {locked_for} 秒后再试",
+                headers={"Retry-After": str(locked_for)},
+            )
+        # 刻意不区分"用户名不存在"与"口令错误"，也不在响应里透露剩余次数 ——
+        # 前者会变成账号枚举，后者会告诉攻击者"再试几次就能确认猜对了"。
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码不正确",
         )
     if not user.is_active:
+        # 口令是对的、只是账号被禁用：**不计失败**。否则管理员一禁用某人，
+        # 对方只要拿旧口令猛试就能把他锁上（把封禁变成被封锁）。
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="账号已被禁用，请联系管理员",
         )
 
+    throttle.record_success(payload.account)
     return {"token": create_token(user), "user": user_payload(user)}
 
 
