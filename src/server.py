@@ -169,6 +169,18 @@ def index() -> HTMLResponse:
     return HTMLResponse(page.read_text(encoding="utf-8"))
 
 
+@app.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    """登录 / 注册页。公开页面：登录态由页面自己在浏览器侧判断。
+
+    与 ``/`` 一样是纯静态文件直出，没有模板渲染 —— 前端三个页面都是自包含的。
+    """
+    page = WEB_DIR / "login.html"
+    if not page.is_file():
+        raise HTTPException(status_code=500, detail="前端文件缺失：web/login.html")
+    return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- 基础接口
 
 

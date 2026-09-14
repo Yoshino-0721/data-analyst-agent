@@ -73,9 +73,14 @@ header{
 .dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(21,163,74,.18)}
 .dot.bad{background:var(--err);box-shadow:0 0 0 3px rgba(225,29,72,.18)}
 
+/* ---------- 账号区 ---------- */
+.account{display:flex;align-items:center;gap:8px;white-space:nowrap}
+#userBadge{font-size:12.5px;color:var(--text-soft)}
+#userBadge b{color:var(--text);font-weight:700}
+
 /* ---------- 主体布局 ---------- */
 main{
-  display:grid;grid-template-columns:minmax(340px,42fr) 58fr;
+  display:grid;grid-template-columns:minmax(190px,19fr) minmax(320px,40fr) 41fr;
   gap:18px;padding:18px;height:calc(100vh - 65px);
 }
 .pane{
@@ -92,6 +97,22 @@ main{
 .pane-body::-webkit-scrollbar{width:9px}
 .pane-body::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:9px;border:2px solid var(--panel)}
 .pane-body::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+/* ---------- 会话侧栏 ---------- */
+.sidebar .pane-body{padding:10px}
+.sess{
+  position:relative;padding:9px 30px 9px 10px;margin-bottom:5px;
+  border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;transition:.14s;
+}
+.sess:hover{background:var(--panel-soft);border-color:var(--border)}
+.sess.active{background:var(--accent-soft);border-color:var(--accent-line)}
+.sess-title{
+  display:block;font-size:12.5px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.sess-meta{display:block;font-size:11px;color:var(--muted)}
+.sess-del{position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:1px 7px;font-size:11px;line-height:1.6}
+.sess-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:18px 8px;line-height:1.9}
 
 /* ---------- 上传区 ---------- */
 .drop{
@@ -248,10 +269,30 @@ pre.log.closed{display:none}
 }
 .alert.warn{background:var(--warn-soft);color:#9a3412;border-color:#fbdcc4}
 
+/* ---------- 改密弹窗 ---------- */
+.overlay{
+  position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+  padding:20px;background:rgba(16,24,40,.42);backdrop-filter:blur(2px);
+}
+.modal{
+  width:min(400px,92vw);background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;
+}
+.modal h3{margin:0 0 14px;font-size:15px}
+.modal label{display:block;margin-bottom:12px;font-size:12.5px;color:var(--text-soft)}
+.modal input{
+  width:100%;margin-top:6px;padding:9px 11px;font:inherit;color:var(--text);background:#fff;
+  border:1px solid var(--border-strong);border-radius:var(--radius-sm);outline:none;transition:.15s;
+}
+.modal input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.14)}
+.modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:6px}
+.hidden{display:none!important}
+
 @media (max-width:960px){
-  main{grid-template-columns:1fr;height:auto;grid-template-rows:minmax(440px,auto) auto}
+  main{grid-template-columns:1fr;height:auto;grid-template-rows:auto minmax(440px,auto) auto}
   .pane{max-height:none}
   .pane-body{max-height:60vh}
+  .sidebar .pane-body{max-height:210px}
 }
 </style>
 </head>
@@ -271,9 +312,23 @@ pre.log.closed{display:none}
   </div>
   <div class="spacer"></div>
   <span class="status-pill" id="env-status"><span class="dot" id="env-dot"></span><span id="env-text">检测中…</span></span>
+  <span class="account">
+    <span id="userBadge"></span>
+    <button class="mini" id="changePwdBtn" type="button">修改密码</button>
+    <button class="mini" id="logoutBtn" type="button">登出</button>
+  </span>
 </header>
 
 <main>
+  <aside class="pane sidebar">
+    <div class="pane-head">
+      会话
+      <span class="spacer"></span>
+      <button class="mini" id="newSessionBtn" type="button">新会话</button>
+    </div>
+    <div class="pane-body" id="sessionList"></div>
+  </aside>
+
   <section class="pane">
     <div class="pane-head">
       对话
@@ -319,6 +374,22 @@ pre.log.closed{display:none}
     </div>
   </section>
 </main>
+
+<div class="overlay hidden" id="pwdOverlay">
+  <div class="modal">
+    <h3>修改密码</h3>
+    <label>原密码
+      <input type="password" id="oldPwdInput" autocomplete="current-password">
+    </label>
+    <label>新密码（至少 6 位）
+      <input type="password" id="newPwdInput" autocomplete="new-password">
+    </label>
+    <div class="modal-actions">
+      <button class="mini" id="pwdCancelBtn" type="button">取消</button>
+      <button class="mini" id="pwdSaveBtn" type="button">保存</button>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -438,7 +509,16 @@ function inline(text){
 
 /* ============================ 状态 ============================ */
 
-const state = { files: [], busy: false };
+const TOKEN_KEY = "auth_token";
+const USER_KEY = "auth_user";
+
+const state = {
+  files: [],
+  busy: false,
+  sessionId: null,   // 当前会话，null 表示「下一条提问会自动开一个新会话」
+  sessions: [],
+  user: null
+};
 
 const el = {
   chat: document.getElementById("chat"),
@@ -454,8 +534,85 @@ const el = {
   form: document.getElementById("ask-form"),
   resetBtn: document.getElementById("reset-btn"),
   envDot: document.getElementById("env-dot"),
-  envText: document.getElementById("env-text")
+  envText: document.getElementById("env-text"),
+  sessionList: document.getElementById("sessionList"),
+  newSessionBtn: document.getElementById("newSessionBtn"),
+  userBadge: document.getElementById("userBadge"),
+  changePwdBtn: document.getElementById("changePwdBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  pwdOverlay: document.getElementById("pwdOverlay"),
+  oldPwdInput: document.getElementById("oldPwdInput"),
+  newPwdInput: document.getElementById("newPwdInput"),
+  pwdSaveBtn: document.getElementById("pwdSaveBtn"),
+  pwdCancelBtn: document.getElementById("pwdCancelBtn")
 };
+
+/* ============================ 登录态 ============================ */
+
+function token(){
+  // 隐私模式下 localStorage 可能直接抛异常 —— 一律降级成「未登录」
+  try{ return localStorage.getItem(TOKEN_KEY); }catch(err){ return null; }
+}
+
+function cachedUser(){
+  try{ return JSON.parse(localStorage.getItem(USER_KEY) || "null"); }catch(err){ return null; }
+}
+
+function clearSession(){
+  try{
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  }catch(err){ /* 清不掉也不影响跳转 */ }
+}
+
+function toLogin(){
+  clearSession();
+  location.replace("/login");
+}
+
+/** 统一的带鉴权请求封装。
+ *
+ * 全部接口（health 除外）都要 Bearer token；漏一处就是一处偶发 401。
+ * 401 一律视为登录态失效：清 token 回登录页，绝不留在半死状态。
+ * 非 2xx 抛 `Error(detail)`，调用方直接拿人话显示。
+ */
+async function apiFetch(url, options){
+  const opts = options || {};
+  const headers = Object.assign({}, opts.headers || {});
+  const current = token();
+  if(current){ headers.Authorization = "Bearer " + current; }
+
+  const resp = await fetch(url, {
+    method: opts.method || "GET",
+    headers: headers,
+    body: opts.body === undefined ? undefined : opts.body
+  });
+
+  if(resp.status === 401){
+    toLogin();
+    throw new Error("登录状态已失效，请重新登录");
+  }
+
+  let data = null;
+  try{ data = await resp.json(); }catch(err){ data = null; }
+  if(!resp.ok){
+    throw new Error((data && data.detail) || ("请求失败（HTTP " + resp.status + "）"));
+  }
+  return data || {};
+}
+
+function postJSON(url, payload){
+  return apiFetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+}
+
+function fmtTime(value){
+  if(!value){ return ""; }
+  return String(value).replace("T", " ").slice(0, 16);
+}
 
 /* ============================ 渲染 ============================ */
 
@@ -479,9 +636,8 @@ function addMessage(role, html){
 
 function renderDatasets(){
   el.datasets.innerHTML = state.files.map(f => {
-    const name = escapeHtml(f.name);
     return '<span class="chip"><code>' + escapeHtml(f.path) + '</code>'
-      + '<span>' + f.rows + ' 行 × ' + f.cols + ' 列</span></span>';
+      + '<span>' + escapeHtml(f.rows) + ' 行 × ' + escapeHtml(f.cols) + ' 列</span></span>';
   }).join("");
 }
 
@@ -527,6 +683,25 @@ function block(label, contentHtml, extraButton){
   wrap.appendChild(head);
   wrap.appendChild(body);
   return wrap;
+}
+
+/** 产物图：`/api/artifact/<name>`（名字来自服务端，服务端还会再做一次路径校验）。 */
+function artifactsBlock(names){
+  const box = document.createElement("div");
+  box.className = "artifacts";
+  names.forEach(name => {
+    const figure = document.createElement("figure");
+    const img = document.createElement("img");
+    img.src = "/api/artifact/" + encodeURIComponent(name);
+    img.alt = name;
+    img.loading = "lazy";
+    const caption = document.createElement("figcaption");
+    caption.textContent = name;
+    figure.appendChild(img);
+    figure.appendChild(caption);
+    box.appendChild(figure);
+  });
+  return box;
 }
 
 function renderStep(step){
@@ -589,21 +764,7 @@ function renderStep(step){
       body.appendChild(hint);
     }
     if(outcome.artifacts && outcome.artifacts.length){
-      const box = document.createElement("div");
-      box.className = "artifacts";
-      outcome.artifacts.forEach(name => {
-        const figure = document.createElement("figure");
-        const img = document.createElement("img");
-        img.src = "/api/artifact/" + encodeURIComponent(name);
-        img.alt = name;
-        img.loading = "lazy";
-        const caption = document.createElement("figcaption");
-        caption.textContent = name;
-        figure.appendChild(img);
-        figure.appendChild(caption);
-        box.appendChild(figure);
-      });
-      body.appendChild(box);
+      body.appendChild(artifactsBlock(outcome.artifacts));
     }
   });
 
@@ -611,32 +772,141 @@ function renderStep(step){
   return card;
 }
 
-function renderTrace(result){
+function clearTrace(){
   el.trace.querySelectorAll(".trace").forEach(node => node.remove());
+  el.trace.querySelectorAll(".alert.warn").forEach(node => node.remove());
+  el.traceEmpty.style.display = "block";
+  el.traceCount.textContent = "";
+}
+
+/** 画执行轨迹。**只有这一个入口** —— 刚跑完与回放历史走的是同一段代码，
+ *  否则「历史里的轨迹」迟早和「眼前的轨迹」长得不一样。
+ *
+ * @param result /api/ask 的响应，或 assistant 消息的 meta（两者同构：
+ *               {steps, artifacts, terminated_by}）
+ * @param options {append:true} 追加而不是清空（一个会话里有多轮问答时用）
+ */
+function renderTrace(result, options){
+  const opts = options || {};
+  const data = result || {};
+  const steps = data.steps || [];
+
+  if(!opts.append){ clearTrace(); }
   el.traceEmpty.style.display = "none";
 
-  (result.steps || []).forEach(step => el.trace.appendChild(renderStep(step)));
+  steps.forEach(step => el.trace.appendChild(renderStep(step)));
 
-  if(result.terminated_by && result.terminated_by !== "answer"){
+  // 顶层 artifacts 是产物总表。已经按 step 画过的不再重复画一遍，
+  // 只补那些没有落在任何 outcome 上的产物（比如最后一轮收尾时产出的图）。
+  const shown = [];
+  steps.forEach(step => (step.outcomes || []).forEach(outcome =>
+    (outcome.artifacts || []).forEach(name => { if(shown.indexOf(name) === -1){ shown.push(name); } })));
+  const extra = (data.artifacts || []).filter(name => shown.indexOf(name) === -1);
+  if(extra.length){ el.trace.appendChild(artifactsBlock(extra)); }
+
+  if(data.terminated_by && data.terminated_by !== "answer"){
     const note = document.createElement("div");
     note.className = "alert warn";
-    note.textContent = result.terminated_by === "max_steps"
+    note.textContent = data.terminated_by === "max_steps"
       ? "已达工具调用轮数上限，以上是模型的收尾回答。"
       : "模型在同一处错误上反复失败，已强制收尾。";
     el.trace.appendChild(note);
   }
-  el.traceCount.textContent = (result.steps || []).length
-    ? "共 " + result.steps.length + " 轮"
-    : "";
-  el.trace.scrollTop = 0;
+
+  const total = el.trace.querySelectorAll(".trace").length;
+  el.traceCount.textContent = total ? "共 " + total + " 轮" : "";
+  if(!opts.append){ el.trace.scrollTop = 0; }
+}
+
+/* ============================ 会话侧栏 ============================ */
+
+function renderSessions(){
+  const sessions = state.sessions || [];
+  if(!sessions.length){
+    el.sessionList.innerHTML = '<div class="sess-empty">还没有会话。<br>上传数据后直接提问即可。</div>';
+    return;
+  }
+  el.sessionList.innerHTML = sessions.map(s => {
+    const active = state.sessionId === s.id ? " active" : "";
+    return '<div class="sess' + active + '" data-session="' + escapeHtml(s.id) + '">'
+      + '<span class="sess-title">' + escapeHtml(s.title || "新会话") + '</span>'
+      + '<span class="sess-meta">' + escapeHtml(fmtTime(s.updated_at)) + '</span>'
+      + '<button class="mini sess-del" type="button" data-del-session="' + escapeHtml(s.id) + '">删除</button>'
+      + '</div>';
+  }).join("");
+}
+
+async function refreshSessions(){
+  const data = await apiFetch("/api/sessions");
+  state.sessions = data.sessions || [];
+  renderSessions();
+}
+
+function newSession(){
+  state.sessionId = null;   // 下一条提问由后端开新会话，前端不再自己造 id
+  el.messages.innerHTML = "";
+  clearTrace();
+  renderSessions();
+  el.question.focus();
+}
+
+/** 切会话：把历史整段恢复出来 —— 包括**执行轨迹**。
+ *
+ * 轨迹的真相在 assistant 消息的 `meta.steps` 里（与 /api/ask 的响应同构），
+ * 所以这里直接把它交给 renderTrace，不另写一套「历史版」渲染。
+ */
+async function switchSession(sessionId){
+  if(state.busy){ return; }
+  try{
+    const data = await apiFetch("/api/sessions/" + sessionId + "/messages");
+    state.sessionId = sessionId;
+    el.messages.innerHTML = "";
+    clearTrace();
+
+    (data.messages || []).forEach(message => {
+      const meta = message.meta || null;
+      if(message.role === "user"){
+        addMessage("user", escapeHtml(message.content));
+        return;
+      }
+      addMessage("assistant", renderRich(message.content || ""));
+      if(meta && ((meta.steps && meta.steps.length) || (meta.artifacts && meta.artifacts.length))){
+        renderTrace(meta, {append: true});
+      }
+    });
+
+    renderSessions();
+  }catch(err){
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }
+}
+
+async function deleteSession(sessionId){
+  if(!confirm("删除这个会话？其中的全部消息与执行轨迹会一并删除。")){ return; }
+  try{
+    await apiFetch("/api/sessions/" + sessionId, {method: "DELETE"});
+    if(state.sessionId === sessionId){ newSession(); }
+    await refreshSessions();
+  }catch(err){
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }
+}
+
+function onSessionListClick(event){
+  const target = event.target;
+  if(!target || !target.dataset){ return; }
+  if(target.dataset.delSession){ deleteSession(Number(target.dataset.delSession)); return; }
+  const row = target.closest ? target.closest("[data-session]") : null;
+  if(row && row.dataset.session){ switchSession(Number(row.dataset.session)); }
 }
 
 /* ============================ 交互 ============================ */
 
+/** 顶栏的全局状态来自**公开的** /api/health —— 它只说环境（有没有 Key、
+ *  执行器能不能用），不再返回任何用户自己的文件。 */
 async function refreshHealth(){
   try{
-    const resp = await fetch("/api/health");
-    const data = await resp.json();
+    const data = await apiFetch("/api/health");
     if(!data.has_api_key){
       el.envDot.className = "dot bad";
       el.envText.textContent = "未配置 API Key";
@@ -653,15 +923,23 @@ async function refreshHealth(){
   }
 }
 
+/** 数据集列表来自需要登录的 /api/workspace（本人工作区）。
+ *  /api/health 是公开接口，用户的文件不在里面 —— 这是多用户改造的核心。 */
+async function refreshWorkspace(){
+  const data = await apiFetch("/api/workspace");
+  state.files = data.files || [];
+  renderDatasets();
+  setBusy(state.busy);
+}
+
 async function uploadFiles(fileList){
   if(!fileList || !fileList.length){ return; }
   const form = new FormData();
   Array.from(fileList).forEach(file => form.append("files", file));
   el.datasets.innerHTML = '<span class="chip">正在解析数据…</span>';
   try{
-    const resp = await fetch("/api/upload", {method: "POST", body: form});
-    const data = await resp.json();
-    if(!resp.ok){ throw new Error(data.detail || "上传失败"); }
+    // FormData 交给浏览器自己带 boundary，绝不能手写 Content-Type
+    const data = await apiFetch("/api/upload", {method: "POST", body: form});
     state.files = data.files || [];
     renderDatasets();
     setBusy(false);
@@ -683,16 +961,16 @@ async function ask(question){
   setBusy(true);
 
   try{
-    const resp = await fetch("/api/ask", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({question: question})
+    // 会话上下文在后端（sessions/messages），前端只带一个 session_id
+    const data = await postJSON("/api/ask", {
+      question: question,
+      session_id: state.sessionId
     });
-    const data = await resp.json();
-    if(!resp.ok){ throw new Error(data.detail || "执行失败"); }
     waiting.remove();
-    renderTrace(data);
-    addMessage("agent", renderRich(data.answer || "（模型没有给出文本回答）"));
+    if(data.session_id){ state.sessionId = data.session_id; }
+    renderTrace(data, {append: true});
+    addMessage("assistant", renderRich(data.answer || "（模型没有给出文本回答）"));
+    refreshSessions().catch(() => {});
   }catch(err){
     waiting.remove();
     addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
@@ -701,50 +979,133 @@ async function ask(question){
   }
 }
 
-el.drop.addEventListener("click", () => el.fileInput.click());
-el.fileInput.addEventListener("change", e => {
-  uploadFiles(e.target.files);
-  e.target.value = "";
-});
-["dragenter", "dragover"].forEach(evt =>
-  el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(evt =>
-  el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.remove("over"); }));
-el.drop.addEventListener("drop", e => {
-  if(e.dataTransfer && e.dataTransfer.files){ uploadFiles(e.dataTransfer.files); }
-});
+/* ============================ 账号 ============================ */
 
-el.form.addEventListener("submit", e => {
-  e.preventDefault();
-  const question = el.question.value.trim();
-  if(!question || state.busy || !state.files.length){ return; }
-  el.question.value = "";
-  ask(question);
-});
+function renderUserBadge(){
+  const user = state.user || cachedUser() || {};
+  if(!user.username){ el.userBadge.textContent = ""; return; }
+  el.userBadge.innerHTML = "<b>" + escapeHtml(user.username) + "</b> · "
+    + escapeHtml(user.role === "admin" ? "管理员" : "用户");
+}
 
-el.question.addEventListener("keydown", e => {
-  if(e.key === "Enter" && !e.shiftKey && !e.isComposing){
-    e.preventDefault();
-    el.form.requestSubmit();
+function openPwd(){
+  el.oldPwdInput.value = "";
+  el.newPwdInput.value = "";
+  el.pwdOverlay.classList.remove("hidden");
+  el.oldPwdInput.focus();
+}
+
+function closePwd(){ el.pwdOverlay.classList.add("hidden"); }
+
+async function savePassword(){
+  const oldPassword = el.oldPwdInput.value;
+  const newPassword = el.newPwdInput.value;
+  if(newPassword.length < 6){
+    addMessage("agent", '<span style="color:#c81e1e">新密码至少 6 位</span>');
+    return;
   }
-});
-
-el.resetBtn.addEventListener("click", async () => {
-  if(state.busy){ return; }
   try{
-    await fetch("/api/reset", {method: "POST"});
-    state.files = [];
-    renderDatasets();
-    el.messages.innerHTML = "";
-    el.trace.querySelectorAll(".trace").forEach(n => n.remove());
-    el.traceEmpty.style.display = "block";
-    el.traceCount.textContent = "";
-    setBusy(false);
-  }catch(err){ /* 清空失败不阻塞使用 */ }
-});
+    await postJSON("/api/auth/change-password", {
+      old_password: oldPassword,
+      new_password: newPassword
+    });
+    closePwd();
+    addMessage("assistant", renderRich("密码已修改，下次登录请使用新密码。"));
+  }catch(err){
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }
+}
 
-refreshHealth();
-setBusy(false);
+/* ============================ 事件绑定 ============================ */
+
+function bindEvents(){
+  el.drop.addEventListener("click", () => el.fileInput.click());
+  el.fileInput.addEventListener("change", e => {
+    uploadFiles(e.target.files);
+    e.target.value = "";
+  });
+  ["dragenter", "dragover"].forEach(evt =>
+    el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(evt =>
+    el.drop.addEventListener(evt, e => { e.preventDefault(); el.drop.classList.remove("over"); }));
+  el.drop.addEventListener("drop", e => {
+    if(e.dataTransfer && e.dataTransfer.files){ uploadFiles(e.dataTransfer.files); }
+  });
+
+  el.form.addEventListener("submit", e => {
+    e.preventDefault();
+    const question = el.question.value.trim();
+    if(!question || state.busy || !state.files.length){ return; }
+    el.question.value = "";
+    ask(question);
+  });
+
+  el.question.addEventListener("keydown", e => {
+    if(e.key === "Enter" && !e.shiftKey && !e.isComposing){
+      e.preventDefault();
+      el.form.requestSubmit();
+    }
+  });
+
+  el.resetBtn.addEventListener("click", async () => {
+    if(state.busy){ return; }
+    try{
+      await apiFetch("/api/reset", {method: "POST"});
+      state.files = [];
+      renderDatasets();
+      el.messages.innerHTML = "";
+      clearTrace();
+      setBusy(false);
+    }catch(err){ /* 清空失败不阻塞使用 */ }
+  });
+
+  el.newSessionBtn.addEventListener("click", newSession);
+  // 会话行是动态渲染的 —— 统一事件委托，避免每次重渲染都要重新绑定
+  el.sessionList.addEventListener("click", onSessionListClick);
+
+  el.changePwdBtn.addEventListener("click", openPwd);
+  el.pwdCancelBtn.addEventListener("click", closePwd);
+  el.pwdSaveBtn.addEventListener("click", savePassword);
+  el.pwdOverlay.addEventListener("click", e => { if(e.target === el.pwdOverlay){ closePwd(); } });
+  el.logoutBtn.addEventListener("click", () => {
+    clearSession();
+    location.replace("/login");
+  });
+}
+
+/* ============================ 启动 ============================ */
+
+/** 登录闸门：没有 token 直接回登录页；有 token 但已失效（401）同样清掉回登录页。
+ *  真正的权限判定在服务端 —— 这里只是别把未登录的人放进一个「什么都点不动」的空壳。 */
+async function boot(){
+  if(!token()){ location.replace("/login"); return; }
+
+  let me = null;
+  try{
+    me = await apiFetch("/api/auth/me");
+  }catch(err){
+    return; // apiFetch 在 401 时已经清 token 并跳转登录页
+  }
+  state.user = me;
+  try{ localStorage.setItem(USER_KEY, JSON.stringify(me)); }catch(err){ /* 忽略 */ }
+
+  bindEvents();
+  renderUserBadge();
+
+  await refreshHealth();
+  try{
+    await refreshWorkspace();
+  }catch(err){
+    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+  }
+  try{
+    await refreshSessions();
+  }catch(err){ /* 会话列表拉不到不阻塞提问 */ }
+}
+
+/* 顶层不碰 localStorage / location：tests/ui_render_check.js 会用
+   new Function(整个 <script>) 求值这段代码，它没有 stub 那两个全局。 */
+document.addEventListener("DOMContentLoaded", boot);
 </script>
 </body>
 </html>

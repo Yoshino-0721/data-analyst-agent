@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 团队工作台</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --surface: #182031;
+    --surface-2: #1f2941;
+    --border: #2b3752;
+    --border-strong: #3a4a6b;
+    --text: #e8edf7;
+    --text-2: #aab6cd;
+    --muted: #7d8aa3;
+    --accent: #4c8dff;
+    --accent-hover: #6ba0ff;
+    --accent-soft: rgba(76, 141, 255, 0.14);
+    --danger: #ff6b6b;
+    --danger-soft: rgba(255, 107, 107, 0.12);
+    --success: #43d17f;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.45);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(76, 141, 255, 0.18), transparent 60%),
+      radial-gradient(900px 500px at 110% 110%, rgba(67, 209, 127, 0.12), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 420px;
+    padding: 32px 30px 26px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(12px);
+  }
+
+  .brand { text-align: center; margin-bottom: 22px; }
+
+  .logo {
+    width: 52px; height: 52px;
+    margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    border-radius: 16px;
+    background: linear-gradient(140deg, var(--accent), #7c5cff);
+    box-shadow: 0 10px 24px rgba(76, 141, 255, 0.32);
+  }
+
+  h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: 0.2px; }
+
+  .sub { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+  .tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 20px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .tab {
+    padding: 9px 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-2);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+
+  .tab:hover { color: var(--text); }
+
+  .tab.active {
+    background: var(--accent-soft);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+
+  form { display: flex; flex-direction: column; gap: 14px; }
+
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+
+  input {
+    padding: 11px 13px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font: inherit;
+    font-size: 14.5px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  button.primary {
+    margin-top: 4px;
+    padding: 12px 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--accent), #6f7dff);
+    color: #fff;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s, opacity .15s;
+  }
+
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  button.primary:disabled { opacity: .6; cursor: progress; }
+
+  .error {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: var(--danger-soft);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--danger);
+    font-size: 13.5px;
+  }
+
+  .hint {
+    margin: 18px 0 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+  }
+
+  code {
+    padding: 1px 6px;
+    background: var(--surface-2);
+    border-radius: 5px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <div class="logo">🔐</div>
+      <h1 id="brandTitle">团队工作台</h1>
+      <p class="sub" id="brandSub">登录后进入你的专属工作区</p>
+    </div>
+
+    <nav class="tabs">
+      <button type="button" class="tab active" id="tabLogin" data-tab="login">登录</button>
+      <button type="button" class="tab" id="tabRegister" data-tab="register">注册</button>
+    </nav>
+
+    <form id="loginForm" autocomplete="on">
+      <label>账号（用户名或邮箱）
+        <input id="loginAccount" name="account" autocomplete="username" placeholder="admin" required>
+      </label>
+      <label>密码
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="••••••" required>
+      </label>
+      <button type="submit" class="primary" id="loginBtn">登录</button>
+    </form>
+
+    <form id="registerForm" class="hidden" autocomplete="on">
+      <label>用户名（2-32 位中文 / 字母 / 数字 / 下划线）
+        <input id="regUsername" name="username" autocomplete="username" placeholder="zhangsan" required>
+      </label>
+      <label>邮箱
+        <input id="regEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+      </label>
+      <label>密码（至少 6 位）
+        <input id="regPassword" name="new-password" type="password" autocomplete="new-password" placeholder="••••••" required>
+      </label>
+      <label>确认密码
+        <input id="regConfirm" name="confirm" type="password" autocomplete="new-password" placeholder="••••••" required>
+      </label>
+      <button type="submit" class="primary" id="regBtn">注册并进入</button>
+    </form>
+
+    <div id="error" class="error hidden" role="alert"></div>
+
+    <p class="hint">
+      首次部署会引导一个默认管理员 <code>admin</code> / <code>admin123</code>，登录后请立即修改密码。
+    </p>
+  </main>
+
+<script>
+'use strict';
+
+/* ---- 两个项目唯一需要改的两行（其余逐字相同，auth 接口契约一致） ---- */
+const BRANDING = { title: '数据分析师 · 登录', subtitle: '登录后进入你的数据工作区' };
+
+const TOKEN_KEY = 'auth_token';
+const USER_KEY  = 'auth_user';
+
+const $ = id => document.getElementById(id);
+
+function showError(message) {
+  const box = $('error');
+  box.textContent = message || '';
+  box.classList.toggle('hidden', !message);
+}
+
+function setBusy(button, busy, label) {
+  button.disabled = busy;
+  button.textContent = busy ? '请稍候…' : label;
+}
+
+/** 统一请求封装：解析 JSON、把后端的 detail 变成可读错误。 */
+async function postJSON(url, payload) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (err) { data = null; }
+  if (!resp.ok) {
+    throw new Error((data && data.detail) || ('请求失败（HTTP ' + resp.status + '）'));
+  }
+  return data || {};
+}
+
+function saveSession(data) {
+  localStorage.setItem(TOKEN_KEY, data.token);
+  localStorage.setItem(USER_KEY, JSON.stringify(data.user || {}));
+}
+
+/** 登录/注册成功后的落点：管理员进后台，普通用户进工作台。 */
+function landingFor(user) {
+  return (user && user.role === 'admin') ? '/admin' : '/';
+}
+
+function enter(data) {
+  saveSession(data);
+  location.replace(landingFor(data.user));
+}
+
+function switchTab(name) {
+  const isLogin = name === 'login';
+  $('tabLogin').classList.toggle('active', isLogin);
+  $('tabRegister').classList.toggle('active', !isLogin);
+  $('loginForm').classList.toggle('hidden', !isLogin);
+  $('registerForm').classList.toggle('hidden', isLogin);
+  showError('');
+}
+
+/** 已登录（token 还有效）就直接放行，别让用户重复登录。 */
+async function resumeIfSignedIn() {
+  let token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch (err) { token = null; }
+  if (!token) return;
+
+  try {
+    const resp = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + token } });
+    if (!resp.ok) throw new Error('stale');
+    const user = await resp.json();
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    location.replace(landingFor(user));
+  } catch (err) {
+    // token 失效/被禁用：清掉，留在登录页
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    } catch (ignore) { /* 隐私模式下 localStorage 不可用，不影响登录 */ }
+  }
+}
+
+function bindTabs() {
+  const tabs = document.querySelectorAll('.tab');
+  for (let i = 0; i < tabs.length; i += 1) {
+    tabs[i].addEventListener('click', () => switchTab(tabs[i].dataset.tab));
+  }
+}
+
+function bindLogin() {
+  $('loginForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    showError('');
+    const button = $('loginBtn');
+    setBusy(button, true, '登录');
+    try {
+      enter(await postJSON('/api/auth/login', {
+        account: $('loginAccount').value.trim(),
+        password: $('loginPassword').value,
+      }));
+    } catch (err) {
+      showError(err.message);
+      setBusy(button, false, '登录');
+    }
+  });
+}
+
+function bindRegister() {
+  $('registerForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    showError('');
+    const password = $('regPassword').value;
+    if (password.length < 6) { showError('密码至少 6 位'); return; }
+    if (password !== $('regConfirm').value) { showError('两次输入的密码不一致'); return; }
+
+    const button = $('regBtn');
+    setBusy(button, true, '注册并进入');
+    try {
+      enter(await postJSON('/api/auth/register', {
+        username: $('regUsername').value.trim(),
+        email: $('regEmail').value.trim(),
+        password: password,
+      }));
+    } catch (err) {
+      showError(err.message);
+      setBusy(button, false, '注册并进入');
+    }
+  });
+}
+
+function boot() {
+  if (BRANDING.title) $('brandTitle').textContent = BRANDING.title;
+  if (BRANDING.subtitle) $('brandSub').textContent = BRANDING.subtitle;
+  bindTabs();
+  bindLogin();
+  bindRegister();
+  resumeIfSignedIn();
+}
+
+/* 不在顶层执行：ui_render_check.js 之类会用 new Function(脚本) 求值整个 <script>，
+   顶层碰 location / localStorage 会直接把它打崩。 */
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>

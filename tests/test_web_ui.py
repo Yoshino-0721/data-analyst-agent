@@ -68,9 +68,9 @@ class TestSelfContained:
         assert remote == [], f"发现外部资源引用：{remote}"
 
     def test_single_file(self):
-        """只有 index.html 一个前端文件 —— 没有构建步骤，clone 下来就能跑。"""
+        """仍然是纯静态文件（工作台 + 登录页）—— 没有构建步骤，clone 下来就能跑。"""
         files = sorted(p.name for p in (ROOT / "web").iterdir() if p.is_file())
-        assert files == ["index.html"], files
+        assert files == ["index.html", "login.html"], files
 
 
 # ------------------------------------------------------------------ 结构
