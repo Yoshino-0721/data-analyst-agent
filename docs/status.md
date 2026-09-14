@@ -11,7 +11,7 @@
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `dedf84e` | `master` `6c72195` |
+| 分支 / HEAD | `main` `b43db02` | `master` `308ae69` |
 | 测试 | **460 通过** | **651 通过**（17 deselected，Docker 集成默认跳过） |
 | 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**，`refs/remotes` 为空 | 无 remote |
 | 端口 | 8000 | 8123 |
