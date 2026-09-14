@@ -19,6 +19,9 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -285,3 +288,41 @@ def test_admin_page_has_no_execution_entry():
 
     assert "/api/ask" not in html
     assert "/api/upload" not in html
+
+
+# ---------------------------------------------------------------- 行为断言（Node）
+
+MANAGED_NODE = Path(
+    r"C:\Users\YoshinoCiallo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+)
+
+
+def _node_binary():
+    found = shutil.which("node")
+    if found:
+        return found
+    return str(MANAGED_NODE) if MANAGED_NODE.is_file() else None
+
+
+def test_login_flow_behaviour_assertions_pass():
+    """用 Node 驱动登录页的**真实脚本**，验证强制改密流程的行为。
+
+    静态断言只能证明"页面里有这些元素"，证明不了"到底放不放行、改密后有没有换
+    token" —— 而这两件恰恰是前端最该守住的地方。浏览器在本机不可用
+    （Edge 在会话中运行时 CLI 不输出 DOM），所以用 Node + DOM 替身求值真实脚本，
+    与项目二 `ui_render_check.js` 同一思路。
+    """
+    binary = _node_binary()
+    if binary is None:
+        pytest.skip("本机没有可用的 node，跳过登录页流程断言")
+
+    script = Path(__file__).resolve().parent / "login_flow_check.js"
+    result = subprocess.run(
+        [binary, str(script), str(PAGES["login"])],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, f"登录页流程断言失败：\n{result.stdout}\n{result.stderr}"
