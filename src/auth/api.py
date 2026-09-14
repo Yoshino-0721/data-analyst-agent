@@ -197,5 +197,12 @@ def change_password(
 
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
+    # 自增版本号 → **此前签发的 token 立刻全部失效**。这是"改密"的应有语义：
+    # 口令之所以要改，前提就是旧凭据可能已经泄露，那旧 token 当然不能再算数。
+    user.token_version = int(user.token_version or 0) + 1
     db.commit()
-    return {"ok": True}
+
+    # 顺手把**新签发**的 token 一起返回：旧 token 已经死了，如果响应里什么都不给，
+    # 客户端下一个请求就是 401，用户会以为"改密把账号弄坏了"。
+    # 新 token 只发给这次已认证的请求，不削弱任何东西。
+    return {"ok": True, "token": create_token(user)}

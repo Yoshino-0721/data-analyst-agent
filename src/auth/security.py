@@ -55,6 +55,7 @@ class TokenUser(Protocol):
     id: int
     username: str
     role: str
+    token_version: int
 
 
 def is_production() -> bool:
@@ -182,6 +183,9 @@ def create_token(user: TokenUser, *, expires_hours: int | None = None) -> str:
         "sub": str(user.id),
         "username": user.username,
         "role": user.role,
+        # 版本号是"这批 token 还有效吗"的唯一判据：改密时库里的版本自增，
+        # 旧 token 立刻失效。用 getattr 兜一下桩对象，缺字段按 0 处理。
+        "token_version": int(getattr(user, "token_version", 0) or 0),
         "iat": now,
         "exp": now + timedelta(hours=expires_hours),
     }
@@ -191,3 +195,17 @@ def create_token(user: TokenUser, *, expires_hours: int | None = None) -> str:
 def decode_token(token: str) -> dict:
     """校验并解码 token；过期 / 签名错误抛 ``jwt.InvalidTokenError`` 子类。"""
     return jwt.decode(token, _secret(), algorithms=[ALGORITHM])
+
+
+def token_version_of(payload: dict) -> int:
+    """取 token 里的版本号；**缺失时返回 -1**（与任何库内版本都不相等）。
+
+    缺失意味着这是**升级前签发的存量 token**。这里刻意选择"一律失效"而不是
+    "缺字段就当版本 0 放行"：后者看着平滑，实际会让这次安全改动**对已签发的
+    token 完全不生效** —— 以为修好了，攻击者手里的 token 照样能用。
+    代价是升级后所有人需要重新登录一次，对自用 / 团队内部署可以接受。
+    """
+    try:
+        return int(payload["token_version"])
+    except (KeyError, TypeError, ValueError):
+        return -1

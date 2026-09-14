@@ -67,22 +67,33 @@ def _create_engine(path: Path):
     return engine
 
 
+# 前向迁移清单：(表名, 列名, 列定义)。加新列时往这里追加一条即可。
+_ADDED_COLUMNS = (
+    ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("users", "token_version", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 def _ensure_columns(engine) -> None:
     """轻量前向迁移：给既有库补上后加的列。
 
     SQLite 的 ``ALTER TABLE ADD COLUMN`` 没有 ``IF NOT EXISTS``，所以先查
     ``PRAGMA table_info`` 再决定加不加。没有这一步，老 ``storage/app.db``
     升级到本版本后会因为缺列而在查询时报错。
+
+    建成清单而不是一串 if：加第三列时只需追加一行，不会再复制粘贴一段判断。
     """
+    tables = sorted({table for table, _, _ in _ADDED_COLUMNS})
     with engine.connect() as conn:
-        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)")}
-        if "must_change_password" not in columns:
-            conn.exec_driver_sql(
-                "ALTER TABLE users ADD COLUMN must_change_password "
-                "BOOLEAN NOT NULL DEFAULT 0"
-            )
-            conn.commit()
-            logger.info("已为既有 users 表补上 must_change_password 列")
+        existing = {
+            table: {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for table in tables
+        }
+        for table, column, ddl in _ADDED_COLUMNS:
+            if column not in existing[table]:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                logger.info("已为既有 %s 表补上 %s 列", table, column)
+        conn.commit()
 
 
 def init_db(path: Path | None = None) -> None:

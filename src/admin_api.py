@@ -165,6 +165,9 @@ def reset_password(
         new_password = "".join(secrets.choice(alphabet) for _ in range(10))
 
     target.password_hash = hash_password(new_password)
+    # 重置口令同样要踢掉该用户已签发的 token —— 这条路径的存在理由就是
+    # "凭据可能已经泄露"，那么旧 token 自然也不能再算数。
+    target.token_version = int(target.token_version or 0) + 1
     db.commit()
     return {"ok": True, "username": target.username, "password": new_password}
 

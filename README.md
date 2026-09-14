@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-616%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-627%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -150,6 +150,15 @@ Authorization: Bearer <token>
 ```
 
 token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`），
+
+> **改密（或管理员重置口令）会让此前签发的 token 立刻全部失效** —— payload 里带
+> `token_version`，改密时库里的版本号自增，旧 token 下一次请求就是 401。
+> 这是"改密"的应有语义：口令之所以要改，前提就是旧凭据可能已经泄露。
+> 为了让客户端不必再登录一次，`/api/auth/change-password` 会在响应里
+> **顺带返回一个新签发的 token**，前端换用它即可继续。
+>
+> 升级说明：`token_version` 是后加的字段，**升级前签发的 token 一律失效**
+> （刻意不做"缺字段就放行"的兼容）—— 所以升级后所有人需要重新登录一次。
 由 `/api/auth/login` 或 `/api/auth/register` 下发，前端存在 `localStorage.auth_token`。
 失效或被禁用时返回 401 / 403，前端自动清 token 并跳回登录页。
 
@@ -221,7 +230,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（616 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（627 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
@@ -387,7 +396,7 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 | POST | `/api/auth/register` | 注册，body `{"username","email","password"}`；注册即登录，返回 `{"token","user"}` |
 | POST | `/api/auth/login` | 登录，body `{"account","password"}`；`account` 可填用户名或邮箱 |
 | GET | `/api/auth/me` | 当前登录用户 |
-| POST | `/api/auth/change-password` | 改密，body `{"old_password","new_password"}` |
+| POST | `/api/auth/change-password` | 改密，body `{"old_password","new_password"}`；**旧 token 当次失效**，响应里返回一个新 token（`{"ok":true,"token":"..."}`） |
 | GET | `/api/workspace` | 当前用户工作区状态（已加载的数据文件与 Schema 摘要、运行目录） |
 | POST | `/api/upload` | 上传数据（multipart，字段名 `files`），**替换**当前用户的数据集；总量超过 `MAX_UPLOAD_SIZE` 返回 **413** |
 | POST | `/api/ask` | 提问，body `{"question": "...", "session_id": 可选}`；返回答案、产物与**完整执行轨迹** |

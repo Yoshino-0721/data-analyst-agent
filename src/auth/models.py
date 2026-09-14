@@ -38,6 +38,9 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
+    # token 版本号：改密（或管理员重置口令）时自增，**此前签发的 token 立刻全部失效**。
+    # 存量 token 的 payload 里没有这个字段，一律判为失效 —— 见 security.token_version_of。
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

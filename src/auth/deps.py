@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from src.auth.db import get_session_factory
 from src.auth.models import User
-from src.auth.security import decode_token
+from src.auth.security import decode_token, token_version_of
 
 # auto_error=False：请求没带 Authorization 时返回 None，由我们统一给 JSON 401
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -64,6 +64,13 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="账号已被禁用，请联系管理员",
+        )
+    # 版本号不匹配 = 这次改密 / 重置口令**之前**签发的 token，一律失效。
+    # 放在 is_active 之后：账号被禁用时 403 比 401 更能说明问题。
+    if token_version_of(payload) != int(user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录状态已失效，请重新登录",
         )
     # 系统生成的初始口令只够"证明你是本人"，不够继续用 —— 改密前不放行任何操作。
     if (
