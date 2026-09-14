@@ -231,6 +231,107 @@ python scripts/check_docker.py --build   # 顺手构建沙箱镜像
 2. 低效实现 → `TIMEOUT`，但 stdout 仍捞回了被杀前打印的内容
 3. 修正后 → `OK` + 产物 `summary.txt`
 
+## 部署
+
+### 推荐：宿主直接部署（venv + systemd）
+
+**这是本项目推荐的部署方式**，原因是架构性的：Agent 需要创建**沙箱容器**，也就是要驱动
+宿主的 Docker daemon。应用跑在宿主上时，它拿到的路径天然就是宿主路径，不需要任何映射；
+一旦把应用塞进容器，就会同时引入下面「备选」里那两个问题。
+
+```bash
+# 1. 取代码 + 建虚拟环境（需要 Python >= 3.13）
+git clone <repo> /opt/data-analyst-agent
+cd /opt/data-analyst-agent
+python3.13 -m venv .venv
+.venv/bin/pip install -e .
+
+# 2. 构建沙箱镜像（在宿主上，只需一次；更新沙箱依赖时重建）
+docker build -t data-analyst-sandbox:latest src/sandbox/image
+
+# 3. 生产配置
+cp .env.example .env
+#   ZHIPUAI_API_KEY=...      必填
+#   APP_ENV=production       必填：非 dev 才会强制 JWT_SECRET、并拒绝构造 local 执行器
+#   EXECUTOR=docker          必填：local 无 OS 级隔离，生产禁用
+#   JWT_SECRET=...           必填（生产缺它服务直接拒绝启动）
+#       生成：python -c "import secrets; print(secrets.token_urlsafe(48))"
+#   ADMIN_PASSWORD=...       建议设置；留空则生成随机强口令并强制首次登录改密
+chmod 600 .env
+
+# 4. 先手工起一次，确认能登录、能上传数据出图
+.venv/bin/python -m uvicorn src.server:app --host 127.0.0.1 --port 8123
+```
+
+`/etc/systemd/system/data-analyst-agent.service`：
+
+```ini
+[Unit]
+Description=data-analyst-agent
+After=network-online.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=analyst
+WorkingDirectory=/opt/data-analyst-agent
+EnvironmentFile=/opt/data-analyst-agent/.env
+ExecStart=/opt/data-analyst-agent/.venv/bin/python -m uvicorn src.server:app --host 127.0.0.1 --port 8123
+Restart=on-failure
+RestartSec=3
+
+# 加固：服务只需要写自己的 storage/，不需要别的特权
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/data-analyst-agent/storage
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now data-analyst-agent
+journalctl -u data-analyst-agent -f     # 未设 ADMIN_PASSWORD 时，初始口令从这里取
+```
+
+两个容易踩的点：
+
+- **`User=analyst` 必须在 `docker` 组里**，否则创建沙箱容器会 Permission denied：
+  `sudo usermod -aG docker analyst`（改完要重新登录 / `systemctl restart`）。
+- **公网必须上 HTTPS**。登录态是 `Authorization: Bearer <token>`，明文 HTTP 下
+  token 可被中间人截获，等同于账号泄露。反向代理把 `8123` 暴露出去即可，
+  但别忘了设 `client_max_body_size`（否则上传大 CSV 时 Nginx 先返 413）。
+
+### 备选：容器部署（`docker-compose.yml`）
+
+`docker-compose.yml` 与 `Dockerfile` 已准备好，并把三个安全默认值固化下来：
+`APP_ENV=production`、`EXECUTOR=docker`、`JWT_SECRET` 必填（compose 的 `environment`
+优先级高于 `env_file`，所以 `.env` 里写 `dev` / `local` 也压不住；缺 `JWT_SECRET`
+会直接中止启动，而不是偷偷随机生成一份）。
+
+**但它有两个必须接受的前提，请读完再决定：**
+
+1. **必须把宿主的 `/var/run/docker.sock` 挂进应用容器**（应用要创建兄弟容器）。
+   拿到 socket 等于拿到宿主 root —— 这个容器一旦被攻破，宿主就被完全接管
+   （容器里的进程可以 `docker run --privileged -v /:/host` 自我提权）。
+   所以 Dockerfile 里**刻意没有**降权到非 root：在这里那是**假安全**，
+   只会引入 bind mount 的 uid/GID 摩擦，把失败伪装成莫名其妙的 Permission denied。
+2. **存储目录在宿主与容器内必须位于完全相同的绝对路径**（由 compose 的
+   `APP_STORAGE_PATH` 保证）。`DockerExecutor` 传给 docker 的挂载参数是**宿主路径**，
+   两边不一致时宿主 daemon 会挂一个**空目录**进沙箱 —— 模型看到空 `/data`，
+   报一个和真实原因完全无关的错。
+
+⚠️ **该 compose 与 Dockerfile 尚未在生产环境做过运行时验证**（开发机刻意不启用
+Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上服务器请按
+`docker-compose.yml` 末尾的 4 步清单逐步验证 —— 其中最后一步「确认一次真实提问能出图」
+才是**路径映射正确**的证明，前几步全绿也说明不了这一点。
+
+> **结论：能宿主部署就用宿主部署。** 容器部署适合「已经决定接受
+> 『应用容器 = 宿主 root』这个前提、并且希望环境不可变」的场景。
+
 ## 配置项
 
 全部通过环境变量或仓库根 `.env` 覆盖（`.env` 不入库）。
