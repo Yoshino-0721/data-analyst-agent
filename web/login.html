@@ -5,24 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · 团队工作台</title>
 <style>
+  /* 设计令牌（定义见 docs/design-tokens.md）：深色主题取值沿用现值、只统一命名；
+     强调色按已确认的方案 A 换成靛蓝 family。 */
   :root {
+    /* 底色与层级 */
     --bg: #0f1420;
     --surface: #182031;
     --surface-2: #1f2941;
     --border: #2b3752;
     --border-strong: #3a4a6b;
+    /* 文字三级 */
     --text: #e8edf7;
     --text-2: #aab6cd;
     --muted: #7d8aa3;
-    --accent: #4c8dff;
-    --accent-hover: #6ba0ff;
-    --accent-soft: rgba(76, 141, 255, 0.14);
+    /* 强调色：靛蓝 family（#818cf8 对 --surface 是 5.46:1，优于原蓝色的 5.09:1） */
+    --accent: #818cf8;
+    --accent-2: #6366f1;
+    --accent-hover: #a5b4fc;
+    --accent-soft: rgba(129, 140, 248, 0.16);
+    --accent-line: rgba(129, 140, 248, 0.34);
+    --on-accent: #ffffff;
+    /* 语义色 */
+    --success: #43d17f;
+    --success-soft: rgba(67, 209, 127, 0.12);
+    --warn: #ffb454;
+    --warn-soft: rgba(255, 180, 84, 0.12);
     --danger: #ff6b6b;
     --danger-soft: rgba(255, 107, 107, 0.12);
-    --success: #43d17f;
-    --radius: 14px;
-    --radius-sm: 9px;
+    --danger-line: rgba(255, 107, 107, 0.4);
+    /* 圆角：8 / 12 / 16 + 药丸 */
+    --radius-sm: 8px;
+    --radius: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 999px;
+    /* 间距 7 档（4px 网格 + 保留最高频的 6px） */
+    --space-1: 4px;
+    --space-2: 6px;
+    --space-3: 8px;
+    --space-4: 12px;
+    --space-5: 16px;
+    --space-6: 24px;
+    --space-7: 32px;
+    /* 字号 6 档（保留最高频的 12.5 / 13.5） */
+    --fs-xs: 11.5px;
+    --fs-sm: 12.5px;
+    --fs-md: 13.5px;
+    --fs-lg: 15px;
+    --fs-xl: 19px;
+    --fs-2xl: 24px;
+    /* 阴影与焦点环 */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.32);
     --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.45);
+    --shadow-focus: 0 0 0 3px var(--accent-soft);
+    /* 等宽字体（与后台同一套） */
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   }
 
   * { box-sizing: border-box; }
@@ -34,20 +71,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: var(--space-6);
     background:
-      radial-gradient(1200px 600px at 15% -10%, rgba(76, 141, 255, 0.18), transparent 60%),
-      radial-gradient(900px 500px at 110% 110%, rgba(67, 209, 127, 0.12), transparent 55%),
+      radial-gradient(1200px 600px at 15% -10%,
+        color-mix(in srgb, var(--accent) 18%, transparent), transparent 60%),
+      radial-gradient(900px 500px at 110% 110%, var(--success-soft), transparent 55%),
       var(--bg);
     color: var(--text);
-    font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    font-size: var(--fs-lg);
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
   }
 
   .card {
     width: 100%;
     max-width: 420px;
-    padding: 32px 30px 26px;
+    padding: var(--space-7) var(--space-7) var(--space-6);
     background: color-mix(in srgb, var(--surface) 92%, transparent);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -55,41 +95,42 @@
     backdrop-filter: blur(12px);
   }
 
-  .brand { text-align: center; margin-bottom: 22px; }
+  .brand { text-align: center; margin-bottom: var(--space-6); }
 
   .logo {
     width: 52px; height: 52px;
-    margin: 0 auto 14px;
+    margin: 0 auto var(--space-5);
     display: flex; align-items: center; justify-content: center;
-    font-size: 24px;
-    border-radius: 16px;
-    background: linear-gradient(140deg, var(--accent), #7c5cff);
-    box-shadow: 0 10px 24px rgba(76, 141, 255, 0.32);
+    font-size: var(--fs-2xl);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(140deg, var(--accent), var(--accent-2));
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 32%, transparent);
   }
 
-  h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: 0.2px; }
+  h1 { margin: 0 0 var(--space-2); font-size: var(--fs-xl); letter-spacing: 0.2px; }
 
-  .sub { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .sub { margin: 0; color: var(--muted); font-size: var(--fs-md); }
 
   .tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    padding: 4px;
-    margin-bottom: 20px;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    margin-bottom: var(--space-6);
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
   }
 
   .tab {
-    padding: 9px 0;
+    padding: var(--space-3) 0;
     border: 0;
-    border-radius: 6px;
+    /* 内嵌在圆角容器里：内层圆角 = 外层 - 容器内边距，避免"圆角套圆角"发脏 */
+    border-radius: calc(var(--radius-sm) - var(--space-1));
     background: transparent;
     color: var(--text-2);
     font: inherit;
-    font-size: 14px;
+    font-size: var(--fs-md);
     cursor: pointer;
     transition: background .15s, color .15s;
   }
@@ -102,36 +143,36 @@
     box-shadow: inset 0 0 0 1px var(--border-strong);
   }
 
-  form { display: flex; flex-direction: column; gap: 14px; }
+  form { display: flex; flex-direction: column; gap: var(--space-5); }
 
-  label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+  label { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--fs-md); color: var(--text-2); }
 
   input {
-    padding: 11px 13px;
+    padding: var(--space-4);
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     color: var(--text);
     font: inherit;
-    font-size: 14.5px;
+    font-size: var(--fs-lg);
     transition: border-color .15s, box-shadow .15s;
   }
 
   input:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+    box-shadow: var(--shadow-focus);
   }
 
   button.primary {
-    margin-top: 4px;
-    padding: 12px 0;
+    margin-top: var(--space-1);
+    padding: var(--space-4) 0;
     border: 0;
     border-radius: var(--radius-sm);
-    background: linear-gradient(135deg, var(--accent), #6f7dff);
-    color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: var(--on-accent);
     font: inherit;
-    font-size: 15px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     cursor: pointer;
     transition: filter .15s, opacity .15s;
@@ -141,41 +182,42 @@
   button.primary:disabled { opacity: .6; cursor: progress; }
 
   .error {
-    margin-top: 16px;
-    padding: 10px 12px;
+    margin-top: var(--space-5);
+    padding: var(--space-4);
     background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border: 1px solid var(--danger-line);
     border-radius: var(--radius-sm);
     color: var(--danger);
-    font-size: 13.5px;
+    font-size: var(--fs-md);
   }
 
   .hint {
-    margin: 18px 0 0;
-    padding-top: 16px;
+    margin: var(--space-5) 0 0;
+    padding-top: var(--space-5);
     border-top: 1px solid var(--border);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     text-align: center;
   }
 
   code {
-    padding: 1px 6px;
+    /* 竖向 1px 是内联 code 的排版微调，不参与 4px 网格 */
+    padding: 1px var(--space-2);
     background: var(--surface-2);
-    border-radius: 5px;
-    font-family: "Cascadia Mono", Consolas, monospace;
-    font-size: 12.5px;
+    border-radius: calc(var(--radius-sm) - var(--space-1));
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
     color: var(--text-2);
   }
 
   .notice {
-    margin: 0 0 16px;
-    padding: 10px 12px;
+    margin: 0 0 var(--space-5);
+    padding: var(--space-4);
     background: var(--accent-soft);
-    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border: 1px solid var(--accent-line);
     border-radius: var(--radius-sm);
     color: var(--text-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
 
   .hidden { display: none !important; }

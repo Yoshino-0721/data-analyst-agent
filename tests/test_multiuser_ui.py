@@ -105,6 +105,81 @@ def test_render_helpers_stay_top_level_for_node_check():
         )
 
 
+# ---------------------------------------------------------------- 设计令牌（docs/design-tokens.md）
+
+# 模块 11 逐页收敛：改完一页就把它加进来，之后不许再退回硬编码颜色。
+CONVERGED_PAGES = ("login",)
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_pages_only_reference_defined_design_tokens(name):
+    """每个 `var(--x)` 都要在 `:root` 里有定义。
+
+    收敛令牌时最容易犯的错是"改名改了一半"：引用了不存在的令牌时浏览器会**静默**丢弃
+    那条声明 —— 页面看着"只是有点不对"，功能测试却全绿。这类错误只能静态抓。
+    """
+    css = "\n".join(
+        re.findall(r"<style[^>]*>(.*?)</style>", read_page(name), re.S)
+    )
+    root = re.search(r":root\s*\{(.*?)\}", css, re.S)
+    assert root, f"{name} 页面没有 :root 令牌块"
+
+    defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", root.group(1)))
+    used = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", css))
+
+    assert used <= defined, f"{name} 引用了未定义的令牌：{sorted(used - defined)}"
+
+
+@pytest.mark.parametrize("name", sorted(PAGES))
+def test_page_css_is_structurally_sound(name):
+    """样式块的括号配平、声明形状、`var()` 闭合。
+
+    浏览器对 CSS 的错误处理是**静默**的：花括号不配平会吞掉它后面的所有规则，
+    `var(` 少一个右括号会让整条声明失效 —— 表现只是"页面有点不对"，功能测试全绿。
+    模块 11 是**大面积机械改样式**，这类错误必须由静态检查兜住。
+    """
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", read_page(name), re.S))
+    assert css, f"{name} 页面没有样式块"
+
+    depth = 0
+    for ch in css:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            assert depth >= 0, f"{name} 样式块出现多余的 `}}`"
+    assert depth == 0, f"{name} 样式块花括号不配平（结束时深度 {depth}）"
+    assert css.count("(") == css.count(")"), f"{name} 样式块圆括号不配平"
+    assert ";;" not in css, f"{name} 样式块出现空声明"
+
+    for match in re.finditer(r"var\(", css):
+        tail = css[match.start():match.start() + 80]
+        assert re.match(r"var\(\s*--[a-z0-9-]+\s*[,)]", tail), (
+            f"{name} 有未闭合或形状不对的 var()：{tail[:40]!r}"
+        )
+
+
+def test_converged_pages_have_no_hardcoded_colors():
+    """已收敛的页面里，`:root` 之外不应再有颜色字面量。
+
+    这是把模块 11 的成果锁住的那道棘轮：令牌集中定义之后，新写的样式一旦又手抄一个
+    `#4c8dff`，就再也回不到"一处改、全站变"的状态了。
+    （代码高亮配色属于内容语义，等 index 收敛时单独收进 `--code-*` 再放宽这条。）
+    """
+    for name in CONVERGED_PAGES:
+        html = read_page(name)
+        css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
+        root = re.search(r":root\s*\{(.*?)\}", css, re.S)
+        assert root, f"{name} 页面没有 :root 令牌块"
+
+        outside = css.replace(root.group(0), "")
+        leftovers = re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)", outside)
+        assert not leftovers, (
+            f"{name} 页面在 :root 之外还有 {len(leftovers)} 处硬编码颜色："
+            f"{sorted(set(leftovers))[:8]} —— 请改用已定义的令牌"
+        )
+
+
 # ---------------------------------------------------------------- 登录页
 
 
