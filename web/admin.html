@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理后台 · 私人数据分析师 Agent</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --surface: #182031;
+    --surface-2: #1f2941;
+    --border: #2b3752;
+    --border-strong: #3a4a6b;
+    --text: #e8edf7;
+    --text-2: #aab6cd;
+    --muted: #7d8aa3;
+    --accent: #4c8dff;
+    --accent-hover: #6ba0ff;
+    --accent-soft: rgba(76, 141, 255, 0.14);
+    --success: #43d17f;
+    --success-soft: rgba(67, 209, 127, 0.12);
+    --danger: #ff6b6b;
+    --danger-soft: rgba(255, 107, 107, 0.12);
+    --warn: #ffb454;
+    --warn-soft: rgba(255, 180, 84, 0.12);
+    --radius: 14px;
+    --radius-sm: 9px;
+    --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1100px 520px at 10% -10%, rgba(76, 141, 255, 0.14), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------- 顶栏 ---------------- */
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 22px; height: 60px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+  }
+
+  .topbar h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .2px; }
+  .topbar .tag {
+    padding: 2px 9px; border-radius: 999px;
+    background: var(--accent-soft); border: 1px solid var(--border-strong);
+    color: var(--text-2); font-size: 12px;
+  }
+
+  .spacer { flex: 1; }
+
+  a.link, button.ghost {
+    padding: 7px 13px;
+    background: transparent; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-2);
+    font: inherit; font-size: 13.5px; text-decoration: none; cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+
+  a.link:hover, button.ghost:hover { color: var(--text); border-color: var(--border-strong); }
+
+  #userBadge { font-size: 13px; color: var(--text-2); }
+  #userBadge b { color: var(--text); }
+
+  /* ---------------- 布局 ---------------- */
+
+  .layout { display: grid; grid-template-columns: 210px 1fr; gap: 22px; padding: 22px; max-width: 1500px; margin: 0 auto; }
+
+  nav.tabs { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 82px; align-self: start; }
+
+  nav.tabs button {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; text-align: left;
+    background: transparent; border: 1px solid transparent;
+    border-radius: var(--radius-sm); color: var(--text-2);
+    font: inherit; font-size: 14px; cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+
+  nav.tabs button:hover { background: var(--surface); color: var(--text); }
+
+  nav.tabs button.active {
+    background: var(--accent-soft); border-color: var(--border-strong); color: var(--text);
+  }
+
+  section.panel { display: none; }
+  section.panel.active { display: block; }
+
+  .card {
+    padding: 20px; margin-bottom: 18px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-md);
+  }
+
+  .card h2 { margin: 0 0 4px; font-size: 15.5px; }
+  .card .hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+
+  /* ---------------- 统计 ---------------- */
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+
+  .stat {
+    padding: 16px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+
+  .stat .value { font-size: 26px; font-weight: 650; letter-spacing: .5px; }
+  .stat .label { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+  /* ---------------- 表格 ---------------- */
+
+  .table-wrap { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowrap; }
+  tr:hover td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+  td.actions { white-space: nowrap; }
+  td.actions button { margin-right: 6px; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+  .empty { padding: 26px; text-align: center; color: var(--muted); font-size: 13.5px; }
+
+  /* ---------------- 控件 ---------------- */
+
+  input[type="search"], input[type="text"], input[type="password"], select {
+    padding: 8px 11px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text); font: inherit; font-size: 13.5px;
+  }
+
+  input:focus, select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+
+  button.primary {
+    padding: 8px 15px; border: 0; border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--accent), #6f7dff);
+    color: #fff; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  button.primary:disabled { opacity: .6; cursor: progress; }
+
+  button.mini {
+    padding: 5px 10px; background: transparent;
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-2); font: inherit; font-size: 12.5px; cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+
+  button.mini:hover { color: var(--text); border-color: var(--border-strong); }
+  button.mini.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  button.mini.danger:hover { background: var(--danger-soft); }
+
+  /* ---------------- 徽章 ---------------- */
+
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; border: 1px solid var(--border-strong); color: var(--text-2);
+  }
+
+  .badge.admin { background: var(--accent-soft); color: var(--accent-hover); border-color: transparent; }
+  .badge.user { background: var(--surface-2); }
+  .badge.on { background: var(--success-soft); color: var(--success); border-color: transparent; }
+  .badge.off { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+  .badge.OK { background: var(--success-soft); color: var(--success); border-color: transparent; }
+  .badge.RUNTIME_ERROR { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+  .badge.TIMEOUT, .badge.OOM { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .badge.REJECTED { background: var(--surface-2); }
+  .badge.SANDBOX_ERROR { background: rgba(160, 120, 255, 0.16); color: #c4a6ff; border-color: transparent; }
+  .badge.none { background: var(--surface-2); }
+
+  /* ---------------- 抽屉 ---------------- */
+
+  .overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; justify-content: flex-end;
+    background: rgba(6, 10, 18, 0.62); backdrop-filter: blur(2px);
+  }
+
+  .drawer {
+    width: min(820px, 94vw); height: 100%; display: flex; flex-direction: column;
+    background: var(--surface); border-left: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .drawer header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+  }
+
+  .drawer header h3 { margin: 0; font-size: 15px; }
+  .drawer .body { flex: 1; overflow-y: auto; padding: 18px 20px 28px; }
+
+  .msg { margin-bottom: 16px; padding: 13px 15px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+  .msg.user { background: var(--accent-soft); }
+  .msg.assistant { background: var(--surface-2); }
+  .msg .who { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .msg .text { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+
+  /* ---------------- 执行轨迹（meta.steps） ---------------- */
+
+  .trace-block { margin-top: 12px; }
+
+  .step {
+    margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); overflow: hidden;
+  }
+
+  .step-head {
+    padding: 8px 12px; font-size: 12.5px; font-weight: 650; color: var(--text-2);
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+  }
+
+  .call { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+
+  .call-head { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+
+  pre.code {
+    margin: 0; padding: 11px 12px; max-height: 300px; overflow: auto;
+    background: #0b1019; border: 1px solid var(--border); border-radius: 7px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word; color: #dbe2f0;
+  }
+
+  .outcome { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .outcome:last-child { border-bottom: 0; }
+  .outcome-head { margin-bottom: 6px; }
+
+  .io-label { font-size: 11.5px; color: var(--muted); margin: 8px 0 4px; }
+
+  pre.io {
+    margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+  }
+
+  pre.io.err { background: var(--danger-soft); color: #ffb3b3; }
+
+  .hint {
+    margin-top: 8px; padding: 8px 11px; border-radius: 7px;
+    background: var(--warn-soft); color: var(--warn); font-size: 12.5px;
+  }
+
+  .arts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+  .art {
+    padding: 3px 9px; border-radius: 999px; font-family: var(--mono); font-size: 12px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+  }
+
+  pre.preview {
+    margin: 0; padding: 14px; max-height: 420px; overflow: auto;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* ---------------- 提示 ---------------- */
+
+  #toast {
+    position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px);
+    padding: 11px 20px; background: var(--surface-2); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+    font-size: 13.5px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 90;
+  }
+
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { border-color: var(--danger); color: var(--danger); }
+
+  #denied { display: none; max-width: 560px; margin: 90px auto; text-align: center; }
+  #denied h2 { font-size: 19px; margin: 0 0 10px; }
+  #denied p { color: var(--text-2); }
+
+  .hidden { display: none !important; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.tabs { flex-direction: row; flex-wrap: wrap; position: static; }
+    nav.tabs button { flex: 1 1 auto; }
+  }
+</style>
+</head>
+<body>
+
+<div id="denied">
+  <h2>需要管理员权限</h2>
+  <p>当前账号不是管理员，无法进入后台。<br>请用管理员账号登录，或返回工作台。</p>
+  <p><a class="link" href="/">返回工作台</a></p>
+</div>
+
+<div id="app" class="hidden">
+  <header class="topbar">
+    <h1>管理后台</h1>
+    <span class="tag">管理员</span>
+    <span class="spacer"></span>
+    <span id="userBadge"></span>
+    <button class="ghost" id="changePwdBtn" type="button">修改密码</button>
+    <a class="link" href="/">工作台</a>
+    <button class="ghost" id="logoutBtn" type="button">登出</button>
+  </header>
+
+  <div class="layout">
+    <nav class="tabs">
+      <button type="button" class="active" data-tab="stats">📊 统计面板</button>
+      <button type="button" data-tab="users">👥 用户管理</button>
+      <button type="button" data-tab="sessions">💬 会话管理</button>
+      <button type="button" data-tab="datasets">📦 数据集管理</button>
+      <button type="button" data-tab="system">⚙️ 系统操作</button>
+    </nav>
+
+    <div>
+      <!-- 统计 -->
+      <section class="panel active" id="panel-stats">
+        <div class="card">
+          <h2>全站概览</h2>
+          <p class="hint">数据来自 SQLite 用户库与数据集索引表。</p>
+          <div class="stats" id="statsGrid"></div>
+        </div>
+        <div class="card">
+          <h2>最近活跃会话</h2>
+          <p class="hint">按更新时间倒序取前 10 条。</p>
+          <div class="table-wrap" id="recentWrap"></div>
+        </div>
+      </section>
+
+      <!-- 用户 -->
+      <section class="panel" id="panel-users">
+        <div class="card">
+          <h2>用户管理</h2>
+          <p class="hint">管理员不能降级或禁用自己的账号（服务端会拒绝）。</p>
+          <div class="toolbar">
+            <input type="search" id="userSearch" placeholder="按用户名或邮箱搜索…">
+            <button class="primary" id="userSearchBtn" type="button">搜索</button>
+            <button class="mini" id="userReloadBtn" type="button">刷新</button>
+          </div>
+          <div class="table-wrap" id="usersWrap"></div>
+        </div>
+      </section>
+
+      <!-- 会话 -->
+      <section class="panel" id="panel-sessions">
+        <div class="card">
+          <h2>会话管理</h2>
+          <p class="hint">可查看任意用户的完整聊天记录与执行轨迹（assistant 消息 meta 里的 steps）。</p>
+          <div class="toolbar">
+            <select id="sessionUserFilter"><option value="">全部用户</option></select>
+            <button class="mini" id="sessionReloadBtn" type="button">刷新</button>
+          </div>
+          <div class="table-wrap" id="sessionsWrap"></div>
+        </div>
+      </section>
+
+      <!-- 数据集 -->
+      <section class="panel" id="panel-datasets">
+        <div class="card">
+          <h2>数据集管理</h2>
+          <p class="hint">跨用户查看已上传的数据文件。这里**不提供内容预览** —— 数据集是 CSV / Excel，
+            预览等于把整份数据吐出来，与「只给模型 Schema 与样本」的成本纪律相悖。</p>
+          <div class="toolbar">
+            <select id="datasetUserFilter"><option value="">全部用户</option></select>
+            <button class="mini" id="datasetReloadBtn" type="button">刷新</button>
+          </div>
+          <div class="table-wrap" id="datasetsWrap"></div>
+        </div>
+      </section>
+
+      <!-- 系统 -->
+      <section class="panel" id="panel-system">
+        <div class="card">
+          <h2>系统状态</h2>
+          <p class="hint">不含 API Key 明文，只显示是否已配置。</p>
+          <div class="table-wrap" id="healthWrap"></div>
+        </div>
+        <div class="card">
+          <h2>系统操作</h2>
+          <p class="hint">本项目没有索引，缓存只包含执行器与模型客户端；改配置或排查时清一次即可。</p>
+          <div class="toolbar">
+            <button class="primary" id="clearCacheBtn" type="button">清理缓存</button>
+            <button class="mini" id="healthReloadBtn" type="button">刷新状态</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div class="overlay hidden" id="drawerOverlay">
+  <div class="drawer">
+    <header>
+      <h3 id="drawerTitle">详情</h3>
+      <span class="spacer"></span>
+      <button class="ghost" id="drawerClose" type="button">关闭</button>
+    </header>
+    <div class="body" id="drawerBody"></div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="pwdOverlay">
+  <div class="drawer" style="width:min(430px,94vw)">
+    <header>
+      <h3>修改密码</h3>
+      <span class="spacer"></span>
+      <button class="ghost" id="pwdClose" type="button">关闭</button>
+    </header>
+    <div class="body">
+      <label style="display:block;margin-bottom:14px;color:var(--text-2);font-size:13px">原密码
+        <input type="password" id="oldPwdInput" style="width:100%;margin-top:6px" autocomplete="current-password">
+      </label>
+      <label style="display:block;margin-bottom:18px;color:var(--text-2);font-size:13px">新密码（至少 6 位）
+        <input type="password" id="newPwdInput" style="width:100%;margin-top:6px" autocomplete="new-password">
+      </label>
+      <button class="primary" id="pwdSaveBtn" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const TOKEN_KEY = 'auth_token';
+const USER_KEY = 'auth_user';
+
+const $ = id => document.getElementById(id);
+
+/* ---------------- 基础工具 ---------------- */
+
+function escapeHtml(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function token() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch (err) { return null; }
+}
+
+function currentUser() {
+  try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch (err) { return null; }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch (err) { /* 隐私模式下忽略 */ }
+}
+
+function toLogin() {
+  clearSession();
+  location.replace('/login');
+}
+
+let toastTimer = null;
+function toast(text, isError) {
+  const box = $('toast');
+  box.textContent = text;
+  box.classList.toggle('error', !!isError);
+  box.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.remove('show'), 2600);
+}
+
+/** 带 Bearer 的统一请求封装；401 立刻回登录页。 */
+async function api(url, options) {
+  const opts = options || {};
+  const headers = Object.assign({}, opts.headers || {});
+  const current = token();
+  if (current) headers.Authorization = 'Bearer ' + current;
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const resp = await fetch(url, {
+    method: opts.method || 'GET',
+    headers: headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+  });
+
+  if (resp.status === 401) { toLogin(); throw new Error('登录状态已失效'); }
+
+  let data = null;
+  try { data = await resp.json(); } catch (err) { data = null; }
+  if (!resp.ok) throw new Error((data && data.detail) || ('请求失败（HTTP ' + resp.status + '）'));
+  return data || {};
+}
+
+function fmtTime(value) {
+  if (!value) return '—';
+  return String(value).replace('T', ' ').slice(0, 19);
+}
+
+/* ---------------- 抽屉 ---------------- */
+
+function openDrawer(title, html) {
+  $('drawerTitle').textContent = title;
+  $('drawerBody').innerHTML = html;
+  $('drawerOverlay').classList.remove('hidden');
+}
+
+function closeDrawer() { $('drawerOverlay').classList.add('hidden'); }
+
+/* ---------------- 统计面板 ---------------- */
+
+const STAT_LABELS = [
+  ['users', '用户总数'],
+  ['active_users', '启用中'],
+  ['sessions', '会话总数'],
+  ['messages', '消息总数'],
+  ['datasets', '数据集总数'],
+  ['sessions_last_24h', '近 24h 活跃会话'],
+];
+
+async function loadStats() {
+  const stats = await api('/api/admin/stats');
+  $('statsGrid').innerHTML = STAT_LABELS.map(
+    pair => '<div class="stat"><div class="value">' + escapeHtml(stats[pair[0]] === undefined || stats[pair[0]] === null ? 0 : stats[pair[0]]) +
+            '</div><div class="label">' + escapeHtml(pair[1]) + '</div></div>'
+  ).join('');
+
+  const data = await api('/api/admin/sessions');
+  const rows = data.sessions.slice(0, 10);
+  $('recentWrap').innerHTML = rows.length === 0
+    ? '<div class="empty">还没有任何会话</div>'
+    : '<table><thead><tr><th>#</th><th>用户</th><th>标题</th><th>更新时间</th><th></th></tr></thead><tbody>' +
+      rows.map(s =>
+        '<tr><td class="mono">' + escapeHtml(s.id) + '</td>' +
+        '<td>' + escapeHtml(s.username) + '</td>' +
+        '<td>' + escapeHtml(s.title) + '</td>' +
+        '<td class="mono">' + escapeHtml(fmtTime(s.updated_at)) + '</td>' +
+        '<td class="actions"><button class="mini" data-session="' + escapeHtml(s.id) + '">查看</button></td></tr>'
+      ).join('') + '</tbody></table>';
+}
+
+/* ---------------- 用户管理 ---------------- */
+
+async function loadUsers() {
+  const q = $('userSearch').value.trim();
+  const data = await api('/api/admin/users' + (q ? '?q=' + encodeURIComponent(q) : ''));
+  const me = currentUser() || {};
+
+  $('usersWrap').innerHTML = data.users.length === 0
+    ? '<div class="empty">没有匹配的用户</div>'
+    : '<table><thead><tr><th>#</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead><tbody>' +
+      data.users.map(u => {
+        const self = me.id === u.id;
+        const roleNext = u.role === 'admin' ? 'user' : 'admin';
+        return '<tr>' +
+          '<td class="mono">' + escapeHtml(u.id) + '</td>' +
+          '<td>' + escapeHtml(u.username) + (self ? ' <span class="badge">我</span>' : '') + '</td>' +
+          '<td>' + escapeHtml(u.email) + '</td>' +
+          '<td><span class="badge ' + (u.role === 'admin' ? 'admin' : 'user') + '">' + escapeHtml(u.role) + '</span></td>' +
+          '<td><span class="badge ' + (u.is_active ? 'on' : 'off') + '">' + (u.is_active ? '启用' : '禁用') + '</span></td>' +
+          '<td class="mono">' + escapeHtml(fmtTime(u.created_at)) + '</td>' +
+          '<td class="actions">' +
+            '<button class="mini" data-role-user="' + escapeHtml(u.id) + '" data-role="' + escapeHtml(roleNext) + '">' +
+              (u.role === 'admin' ? '降为用户' : '升为管理员') + '</button>' +
+            '<button class="mini" data-active-user="' + escapeHtml(u.id) + '" data-active="' + (u.is_active ? '0' : '1') + '">' +
+              (u.is_active ? '禁用' : '启用') + '</button>' +
+            '<button class="mini" data-reset-user="' + escapeHtml(u.id) + '" data-username="' + escapeHtml(u.username) + '">重置密码</button>' +
+          '</td></tr>';
+      }).join('') + '</tbody></table>';
+}
+
+async function patchUser(id, body) {
+  try {
+    await api('/api/admin/users/' + id, { method: 'PATCH', body: body });
+    toast('已更新');
+    await loadUsers();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function resetPassword(id, username) {
+  if (!confirm('重置「' + username + '」的密码？旧密码会立即失效。')) return;
+  try {
+    const data = await api('/api/admin/users/' + id + '/reset-password', { method: 'POST', body: {} });
+    openDrawer('重置密码成功', '<p>新密码只显示这一次，请立即转交用户：</p>' +
+      '<pre class="preview">' + escapeHtml(data.username) + '  /  ' + escapeHtml(data.password) + '</pre>');
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- 会话管理 ---------------- */
+
+async function fillUserFilters() {
+  const data = await api('/api/admin/users');
+  const options = data.users.map(
+    u => '<option value="' + escapeHtml(u.id) + '">' + escapeHtml(u.username) + '</option>'
+  ).join('');
+  for (const id of ['sessionUserFilter', 'datasetUserFilter']) {
+    const select = $(id);
+    const kept = select.value;
+    select.innerHTML = '<option value="">全部用户</option>' + options;
+    select.value = kept;
+  }
+}
+
+async function loadSessions() {
+  const userId = $('sessionUserFilter').value;
+  const data = await api('/api/admin/sessions' + (userId ? '?user_id=' + encodeURIComponent(userId) : ''));
+  $('sessionsWrap').innerHTML = data.sessions.length === 0
+    ? '<div class="empty">没有会话</div>'
+    : '<table><thead><tr><th>#</th><th>用户</th><th>标题</th><th>创建</th><th>更新</th><th>操作</th></tr></thead><tbody>' +
+      data.sessions.map(s =>
+        '<tr><td class="mono">' + escapeHtml(s.id) + '</td>' +
+        '<td>' + escapeHtml(s.username) + '</td>' +
+        '<td>' + escapeHtml(s.title) + '</td>' +
+        '<td class="mono">' + escapeHtml(fmtTime(s.created_at)) + '</td>' +
+        '<td class="mono">' + escapeHtml(fmtTime(s.updated_at)) + '</td>' +
+        '<td class="actions">' +
+          '<button class="mini" data-session="' + escapeHtml(s.id) + '">查看记录</button>' +
+          '<button class="mini danger" data-del-session="' + escapeHtml(s.id) + '">删除</button>' +
+        '</td></tr>'
+      ).join('') + '</tbody></table>';
+}
+
+/* ---------------- 执行轨迹（本项目特有） ---------------- */
+
+const STATUS_LABEL = {
+  OK: 'OK 执行成功',
+  RUNTIME_ERROR: 'RUNTIME_ERROR 代码报错',
+  TIMEOUT: 'TIMEOUT 执行超时',
+  OOM: 'OOM 内存超限',
+  REJECTED: 'REJECTED 预检拒绝',
+  SANDBOX_ERROR: 'SANDBOX_ERROR 沙箱异常',
+};
+
+function statusBadge(status) {
+  const key = status || 'none';
+  const label = STATUS_LABEL[status] || (status ? status : '已返回');
+  return '<span class="badge ' + escapeHtml(key) + '">' + escapeHtml(label) + '</span>';
+}
+
+/** 把 assistant 消息 meta 里的执行轨迹画出来。
+ *
+ * 本项目**没有单独的轨迹表** —— 模型每一步写了什么代码、在沙箱里是什么结果，
+ * 全在 meta.steps 里（与工作台提问接口的响应同构）。这是管理员事后追责的唯一现场：
+ * 代码、stdout、清洗后的 traceback、给模型的修正 hint、以及产出的产物名。
+ *
+ * 全部字段都是**别人写的不可信文本**，一律先 escapeHtml 再拼 HTML。
+ */
+function renderTraceMeta(meta) {
+  const steps = (meta && meta.steps) || [];
+  if (!steps.length) return '';
+
+  const cards = steps.map(step => {
+    const calls = (step.calls || []).map(call =>
+      '<div class="call">' +
+        '<div class="call-head">调用 ' + escapeHtml(call.name || '') +
+          (call.file_name ? ' · ' + escapeHtml(call.file_name) : '') +
+        '</div>' +
+        (call.code ? '<pre class="code">' + escapeHtml(call.code) + '</pre>' : '') +
+      '</div>'
+    ).join('');
+
+    const outcomes = (step.outcomes || []).map(outcome =>
+      '<div class="outcome">' +
+        '<div class="outcome-head">' + statusBadge(outcome.status) + '</div>' +
+        (outcome.stdout ? '<div class="io-label">stdout</div><pre class="io">' + escapeHtml(outcome.stdout) + '</pre>' : '') +
+        (outcome.stderr ? '<div class="io-label">stderr（清洗后的 traceback）</div><pre class="io err">' + escapeHtml(outcome.stderr) + '</pre>' : '') +
+        (outcome.hint ? '<div class="hint">提示：' + escapeHtml(outcome.hint) + '</div>' : '') +
+        ((outcome.artifacts || []).length
+          ? '<div class="arts">' + outcome.artifacts.map(n => '<span class="art">' + escapeHtml(n) + '</span>').join('') + '</div>'
+          : '') +
+      '</div>'
+    ).join('');
+
+    return '<div class="step">' +
+      '<div class="step-head">第 ' + escapeHtml((step.index === undefined || step.index === null ? 0 : step.index) + 1) + ' 轮</div>' +
+      calls + outcomes +
+    '</div>';
+  }).join('');
+
+  return '<div class="trace-block">' + cards + '</div>';
+}
+
+async function viewSession(sessionId) {
+  try {
+    const data = await api('/api/admin/sessions/' + sessionId + '/messages');
+    const body = data.messages.length === 0
+      ? '<div class="empty">该会话还没有消息</div>'
+      : data.messages.map(m =>
+          '<div class="msg ' + (m.role === 'user' ? 'user' : 'assistant') + '">' +
+            '<div class="who">' + escapeHtml(m.role === 'user' ? '用户' : '助手') + ' · ' + escapeHtml(fmtTime(m.created_at)) + '</div>' +
+            '<div class="text">' + escapeHtml(m.content) + '</div>' +
+            renderTraceMeta(m.meta) +
+          '</div>'
+        ).join('');
+    openDrawer('会话 #' + sessionId + ' · ' + (data.username || '') + ' · ' + (data.session.title || ''), body);
+  } catch (err) { toast(err.message, true); }
+}
+
+async function deleteSession(sessionId) {
+  if (!confirm('删除会话 #' + sessionId + '？其全部消息与执行轨迹会一并删除。')) return;
+  try {
+    await api('/api/admin/sessions/' + sessionId, { method: 'DELETE' });
+    toast('已删除');
+    await loadSessions();
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- 数据集管理 ---------------- */
+
+async function loadDatasets() {
+  const userId = $('datasetUserFilter').value;
+  const data = await api('/api/admin/datasets' + (userId ? '?user_id=' + encodeURIComponent(userId) : ''));
+  $('datasetsWrap').innerHTML = data.datasets.length === 0
+    ? '<div class="empty">没有数据集</div>'
+    : '<table><thead><tr><th>#</th><th>用户</th><th>文件名</th><th>行数</th><th>列数</th><th>上传时间</th><th>操作</th></tr></thead><tbody>' +
+      data.datasets.map(d =>
+        '<tr><td class="mono">' + escapeHtml(d.id) + '</td>' +
+        '<td>' + escapeHtml(d.username) + '</td>' +
+        '<td>' + escapeHtml(d.filename) + '</td>' +
+        '<td class="mono">' + escapeHtml(d.n_rows) + '</td>' +
+        '<td class="mono">' + escapeHtml(d.n_cols) + '</td>' +
+        '<td class="mono">' + escapeHtml(fmtTime(d.created_at)) + '</td>' +
+        '<td class="actions">' +
+          '<button class="mini danger" data-del-dataset="' + escapeHtml(d.id) + '" data-name="' + escapeHtml(d.filename) + '">删除</button>' +
+        '</td></tr>'
+      ).join('') + '</tbody></table>';
+}
+
+/** 删除任意用户的数据集。响应里的 file_removed 说明文件本体是否真的删掉了 ——
+ *  本机的删除钩子可能只把它改名挪开，那就得如实告诉管理员「索引没了、文件还在」。 */
+async function deleteDataset(datasetId, name) {
+  if (!confirm('删除数据集「' + name + '」？该用户下次提问将不再挂载这份数据。')) return;
+  try {
+    const data = await api('/api/admin/datasets/' + datasetId, { method: 'DELETE' });
+    toast(data.file_removed ? '已删除' : '已从索引移除（文件本体未能删除，已改名挪开）', !data.file_removed);
+    await loadDatasets();
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- 系统操作 ---------------- */
+
+const HEALTH_LABELS = [
+  ['status', '服务状态'],
+  ['has_api_key', 'API Key 已配置'],
+  ['model', '对话模型'],
+  ['executor', '执行器'],
+  ['executor_ok', '执行器可用'],
+  ['executor_note', '执行器说明'],
+  ['storage_root', '存储目录'],
+];
+
+async function loadHealth() {
+  const data = await api('/api/admin/system/health');
+  $('healthWrap').innerHTML = '<table><tbody>' + HEALTH_LABELS.map(pair => {
+    const value = data[pair[0]];
+    return '<tr><th>' + escapeHtml(pair[1]) + '</th><td class="mono">' +
+      escapeHtml(typeof value === 'boolean' ? (value ? '是' : '否') : (value === undefined || value === null ? '—' : value)) +
+      '</td></tr>';
+  }).join('') + '</tbody></table>';
+}
+
+/* ---------------- 修改密码 / 登出 ---------------- */
+
+async function savePassword() {
+  const oldPassword = $('oldPwdInput').value;
+  const newPassword = $('newPwdInput').value;
+  if (newPassword.length < 6) { toast('新密码至少 6 位', true); return; }
+  try {
+    await api('/api/auth/change-password', {
+      method: 'POST',
+      body: { old_password: oldPassword, new_password: newPassword },
+    });
+    $('pwdOverlay').classList.add('hidden');
+    $('oldPwdInput').value = '';
+    $('newPwdInput').value = '';
+    toast('密码已修改');
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- 事件绑定 ---------------- */
+
+const TAB_LOADERS = {
+  stats: loadStats,
+  users: loadUsers,
+  sessions: loadSessions,
+  datasets: loadDatasets,
+  system: loadHealth,
+};
+
+function switchTab(name) {
+  const buttons = document.querySelectorAll('nav.tabs button');
+  for (let i = 0; i < buttons.length; i += 1) {
+    buttons[i].classList.toggle('active', buttons[i].dataset.tab === name);
+  }
+  const panels = document.querySelectorAll('section.panel');
+  for (let i = 0; i < panels.length; i += 1) {
+    panels[i].classList.toggle('active', panels[i].id === 'panel-' + name);
+  }
+  const loader = TAB_LOADERS[name];
+  if (loader) loader().catch(err => toast(err.message, true));
+}
+
+function bind() {
+  const tabs = document.querySelectorAll('nav.tabs button');
+  for (let i = 0; i < tabs.length; i += 1) {
+    tabs[i].addEventListener('click', () => switchTab(tabs[i].dataset.tab));
+  }
+
+  $('userSearchBtn').addEventListener('click', () => loadUsers().catch(e => toast(e.message, true)));
+  $('userSearch').addEventListener('keydown', e => { if (e.key === 'Enter') $('userSearchBtn').click(); });
+  $('userReloadBtn').addEventListener('click', () => loadUsers().catch(e => toast(e.message, true)));
+  $('sessionReloadBtn').addEventListener('click', () => loadSessions().catch(e => toast(e.message, true)));
+  $('datasetReloadBtn').addEventListener('click', () => loadDatasets().catch(e => toast(e.message, true)));
+  $('healthReloadBtn').addEventListener('click', () => loadHealth().catch(e => toast(e.message, true)));
+  $('sessionUserFilter').addEventListener('change', () => loadSessions().catch(e => toast(e.message, true)));
+  $('datasetUserFilter').addEventListener('change', () => loadDatasets().catch(e => toast(e.message, true)));
+
+  $('clearCacheBtn').addEventListener('click', async () => {
+    try { await api('/api/admin/system/reset-caches', { method: 'POST', body: {} }); toast('缓存已清理'); }
+    catch (err) { toast(err.message, true); }
+  });
+
+  $('drawerClose').addEventListener('click', closeDrawer);
+  $('drawerOverlay').addEventListener('click', e => { if (e.target === $('drawerOverlay')) closeDrawer(); });
+
+  $('changePwdBtn').addEventListener('click', () => $('pwdOverlay').classList.remove('hidden'));
+  $('pwdClose').addEventListener('click', () => $('pwdOverlay').classList.add('hidden'));
+  $('pwdSaveBtn').addEventListener('click', savePassword);
+  $('logoutBtn').addEventListener('click', () => { clearSession(); location.replace('/login'); });
+
+  // 表格里的按钮都是动态生成的 —— 统一事件委托，避免每次重渲染都要重新绑定
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (!target || !target.dataset) return;
+    if (target.dataset.session) viewSession(target.dataset.session);
+    else if (target.dataset.delSession) deleteSession(target.dataset.delSession);
+    else if (target.dataset.delDataset) deleteDataset(target.dataset.delDataset, target.dataset.name || '');
+    else if (target.dataset.roleUser) patchUser(target.dataset.roleUser, { role: target.dataset.role });
+    else if (target.dataset.activeUser) patchUser(target.dataset.activeUser, { is_active: target.dataset.active === '1' });
+    else if (target.dataset.resetUser) resetPassword(target.dataset.resetUser, target.dataset.username || '');
+  });
+}
+
+/** 权限闸门在服务端（普通用户访问 /api/admin/* 一律 403）；
+    这里只负责别把无权限的人放进一个空壳界面。 */
+async function boot() {
+  if (!token()) { location.replace('/login'); return; }
+
+  let me = null;
+  try {
+    me = await api('/api/auth/me');
+  } catch (err) {
+    return; // api() 已在 401 时跳转登录页
+  }
+
+  if (me.role !== 'admin') {
+    document.body.classList.add('denied');
+    $('denied').style.display = 'block';
+    $('app').classList.add('hidden');
+    return;
+  }
+
+  try { localStorage.setItem(USER_KEY, JSON.stringify(me)); } catch (err) { /* 忽略 */ }
+
+  $('userBadge').innerHTML = '<b>' + escapeHtml(me.username) + '</b> · 管理员';
+  $('app').classList.remove('hidden');
+
+  bind();
+  await fillUserFilters().catch(() => {});
+  await loadStats().catch(err => toast(err.message, true));
+}
+
+/* 顶层不求值任何副作用：前端渲染断言会用 new Function(整个脚本) 求值这一段。 */
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>

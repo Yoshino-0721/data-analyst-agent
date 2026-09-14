@@ -181,6 +181,20 @@ def login_page() -> HTMLResponse:
     return HTMLResponse(page.read_text(encoding="utf-8"))
 
 
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page() -> HTMLResponse:
+    """管理后台页。同样只直出静态文件。
+
+    页面不是权限闸门 —— 真正的闸门是 ``admin_api`` 上挂的 ``require_admin``：
+    普通用户拿到这份 HTML 也只会看到「需要管理员权限」，任何 ``/api/admin/*``
+    请求都会 403。
+    """
+    page = WEB_DIR / "admin.html"
+    if not page.is_file():
+        raise HTTPException(status_code=500, detail="前端文件缺失：web/admin.html")
+    return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- 基础接口
 
 
