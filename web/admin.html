@@ -289,6 +289,19 @@
   #denied h2 { font-size: 19px; margin: 0 0 10px; }
   #denied p { color: var(--text-2); }
 
+  /* 一次性口令 / 改密提示：要"一眼看出来"，但只用既有的语义变量，不引新色值 */
+  .notice { margin: 0 0 12px; padding: 9px 11px; border-radius: var(--radius-sm);
+    background: var(--accent-soft); border: 1px solid var(--border-strong);
+    color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+  .notice.err { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+  .reveal { margin: 0 0 16px; padding: 13px 15px; border-radius: var(--radius-sm);
+    background: var(--warn-soft); border: 1px solid var(--warn); }
+  .reveal h3 { margin: 0; font-size: 13.5px; color: var(--warn); }
+  .reveal .cred { display: block; margin: 9px 0; padding: 10px 12px; border-radius: var(--radius-sm);
+    background: var(--surface); border: 1px dashed var(--border-strong);
+    font-family: var(--mono); font-size: 13.5px; color: var(--text); word-break: break-all; }
+  .reveal .warn { margin: 6px 0 0; font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
+
   .hidden { display: none !important; }
 
   @media (max-width: 900px) {
@@ -343,6 +356,20 @@
 
       <!-- 用户 -->
       <section class="panel" id="panel-users">
+        <div class="card">
+          <h2>新建账号</h2>
+          <p class="hint">口令由服务端生成，<b>只在创建成功那一次显示</b>；新账号首次登录必须先自行修改密码。</p>
+          <div class="toolbar">
+            <input type="text" id="newUserName" placeholder="用户名（1-32 位）" autocomplete="off">
+            <input type="email" id="newUserEmail" placeholder="邮箱" autocomplete="off">
+            <select id="newUserRole">
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+            </select>
+            <button class="primary" id="newUserBtn" type="button">创建账号</button>
+          </div>
+          <div class="reveal hidden" id="newUserResult"></div>
+        </div>
         <div class="card">
           <h2>用户管理</h2>
           <p class="hint">管理员不能降级或禁用自己的账号（服务端会拒绝）。</p>
@@ -418,11 +445,13 @@
 <div class="overlay hidden" id="pwdOverlay">
   <div class="drawer" style="width:min(430px,94vw)">
     <header>
-      <h3>修改密码</h3>
+      <h3 id="pwdTitle">修改密码</h3>
       <span class="spacer"></span>
       <button class="ghost" id="pwdClose" type="button">关闭</button>
     </header>
     <div class="body">
+      <p id="pwdSub" style="margin:0 0 14px;color:var(--text-2);font-size:12.5px;line-height:1.5">改完立即生效，下次登录请使用新密码。</p>
+      <div class="notice hidden" id="pwdNotice"></div>
       <label style="display:block;margin-bottom:14px;color:var(--text-2);font-size:13px">原密码
         <input type="password" id="oldPwdInput" style="width:100%;margin-top:6px" autocomplete="current-password">
       </label>
@@ -774,20 +803,116 @@ async function loadHealth() {
 
 /* ---------------- 修改密码 / 登出 ---------------- */
 
+/** 是否处于"必须先改密"模式；为真时这个框**关不掉**。 */
+let pwdForced = false;
+/** 强制改密完成时要放行的 boot 等待者。 */
+let pwdForcedResolve = null;
+
+function showPwdNotice(text, isError) {
+  const el = $('pwdNotice');
+  el.textContent = text || '';
+  el.classList.toggle('err', !!isError);
+  el.classList.toggle('hidden', !text);
+}
+
+function openPwdDialog(forced) {
+  pwdForced = !!forced;
+  $('oldPwdInput').value = '';
+  $('newPwdInput').value = '';
+  $('pwdTitle').textContent = pwdForced ? '必须先修改密码' : '修改密码';
+  $('pwdSub').textContent = pwdForced
+    ? '该账号使用的是系统生成的初始口令，改完才能使用其它功能。'
+    : '改完立即生效，下次登录请使用新密码。';
+  // 隐藏而不是禁用：点了没反应的按钮比没有按钮更让人困惑。
+  $('pwdClose').hidden = pwdForced;
+  // 只是**提示**，不是前端校验 —— 口令强度始终由服务端仲裁（前端不复制那套规则）
+  showPwdNotice(pwdForced ? '服务端要求：至少 12 位，且含大小写 / 数字 / 符号。' : '');
+  $('pwdOverlay').classList.remove('hidden');
+}
+
+function closePwdDialog() {
+  // 强制改密时不能关：关闭按钮与 Esc 都走这里 —— 服务端本来也不会放行，
+  // 前端不该假装能跳过。
+  if (pwdForced) return;
+  $('pwdOverlay').classList.add('hidden');
+}
+
+/** 强制改密：弹出关不掉的改密框，并等它改完再继续（boot 会 await 它）。 */
+function forcePasswordChange() {
+  openPwdDialog(true);
+  return new Promise(resolve => { pwdForcedResolve = resolve; });
+}
+
 async function savePassword() {
   const oldPassword = $('oldPwdInput').value;
   const newPassword = $('newPwdInput').value;
-  if (newPassword.length < 6) { toast('新密码至少 6 位', true); return; }
+  const wasForced = pwdForced;
+  if (newPassword.length < 6) { showPwdNotice('新密码至少 6 位', true); return; }
+  $('pwdSaveBtn').disabled = true;
   try {
-    await api('/api/auth/change-password', {
+    const data = await api('/api/auth/change-password', {
       method: 'POST',
       body: { old_password: oldPassword, new_password: newPassword },
     });
-    $('pwdOverlay').classList.add('hidden');
+    // ⚠️ 改密会让**此前签发的 token 立即失效**，必须换用响应里新签发的这一个。
+    // 漏了这步，改密成功后的下一个请求就是 401 —— 用户会以为"改密把账号弄坏了"。
+    if (data && data.token) {
+      try { localStorage.setItem(TOKEN_KEY, data.token); } catch (err) { /* 隐私模式 */ }
+    }
+    pwdForced = false;
+    showPwdNotice('');
+    closePwdDialog();
     $('oldPwdInput').value = '';
     $('newPwdInput').value = '';
     toast('密码已修改');
+
+    if (wasForced) {
+      // 改完用新身份校正一次（must_change_password 已变 false），再放 boot 继续
+      try {
+        const fresh = await api('/api/auth/me');
+        try { localStorage.setItem(USER_KEY, JSON.stringify(fresh)); } catch (err) { /* 忽略 */ }
+        $('userBadge').innerHTML = '<b>' + escapeHtml(fresh.username) + '</b> · 管理员';
+      } catch (err) { /* 401 时 api() 已清 token 并跳登录页 */ }
+      const resume = pwdForcedResolve;
+      pwdForcedResolve = null;
+      if (resume) resume();
+    }
+  } catch (err) { showPwdNotice(err.message, true); }
+  finally { $('pwdSaveBtn').disabled = false; }
+}
+
+/* ---------------- 新建账号 ---------------- */
+
+/** 管理员建号：口令**只在这次响应里出现一次**（库里只有 bcrypt 哈希，读接口拿不回）。 */
+async function createUser() {
+  const username = $('newUserName').value.trim();
+  const email = $('newUserEmail').value.trim();
+  const role = $('newUserRole').value;
+  if (!username || !email) { toast('用户名与邮箱都要填', true); return; }
+
+  const btn = $('newUserBtn');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/admin/users', {
+      method: 'POST',
+      body: { username: username, email: email, role: role },
+    });
+    // 口令不落库明文，任何读接口都拿不回它 —— 所以这里不能只弹一个 toast：
+    // 必须把口令摆在页面上，并说清"只出现这一次"。
+    $('newUserResult').innerHTML =
+      '<h3>账号已创建，请立即转交本人</h3>' +
+      '<span class="cred">' + escapeHtml(data.user.username) + '　' + escapeHtml(data.password) + '</span>' +
+      '<p class="warn">这串口令<b>只显示这一次</b>：刷新或离开本页后就再也拿不到了。' +
+      '真丢了不要紧 —— 在下面的用户列表里点「重置密码」重新生成一个即可。</p>' +
+      '<p class="warn">该账号首次登录后必须先修改密码，改完才能使用其它功能。</p>';
+    $('newUserResult').classList.remove('hidden');
+    $('newUserName').value = '';
+    $('newUserEmail').value = '';
+    $('newUserRole').value = 'user';
+    toast('账号已创建');
+    await loadUsers();
   } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; }
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -836,9 +961,13 @@ function bind() {
   $('drawerClose').addEventListener('click', closeDrawer);
   $('drawerOverlay').addEventListener('click', e => { if (e.target === $('drawerOverlay')) closeDrawer(); });
 
-  $('changePwdBtn').addEventListener('click', () => $('pwdOverlay').classList.remove('hidden'));
-  $('pwdClose').addEventListener('click', () => $('pwdOverlay').classList.add('hidden'));
+  // 包一层：直接把 openPwdDialog 交给 addEventListener 的话，点击事件对象会被当成
+  // forced 传进去（对象恒为 truthy），于是主动改密也会变成关不掉。
+  $('changePwdBtn').addEventListener('click', () => openPwdDialog(false));
+  $('pwdClose').addEventListener('click', closePwdDialog);
   $('pwdSaveBtn').addEventListener('click', savePassword);
+  $('newUserBtn').addEventListener('click', createUser);
+  $('newUserEmail').addEventListener('keydown', e => { if (e.key === 'Enter') $('newUserBtn').click(); });
   $('logoutBtn').addEventListener('click', () => { clearSession(); location.replace('/login'); });
 
   // 表格里的按钮都是动态生成的 —— 统一事件委托，避免每次重渲染都要重新绑定
@@ -879,6 +1008,17 @@ async function boot() {
   $('app').classList.remove('hidden');
 
   bind();
+
+  if (me.must_change_password) {
+    // 服务端在改密之前，除 /api/auth/me 与改密接口外一律 403 —— 所以这里
+    // **不去加载任何业务数据**（调了也只是一串 403），直接把人按在改密框上，
+    // 等他改完再继续。这一步是"别让用户卡死"的前端一半。
+    //
+    // 非管理员走的是上面那条 denied 分支：本页不是他的工位，强制改密由工作台接管。
+    await forcePasswordChange();
+    me = currentUser() || me;
+  }
+
   await fillUserFilters().catch(() => {});
   await loadStats().catch(err => toast(err.message, true));
 }

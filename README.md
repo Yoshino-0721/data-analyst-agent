@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-631%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-634%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -230,7 +230,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（631 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（634 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）

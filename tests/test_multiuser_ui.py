@@ -290,6 +290,40 @@ def test_admin_page_has_no_execution_entry():
     assert "/api/upload" not in html
 
 
+def test_admin_page_has_forced_password_change_gate():
+    """后台同样要认 must_change_password：管理员也会被建号流程闸住。
+
+    行为层面由 `admin_pwd_flow_check.js` 真跑一遍；这里守静态契约。
+    """
+    html = read_page("admin")
+
+    assert 'id="pwdTitle"' in html
+    assert 'id="pwdSub"' in html
+    assert 'id="pwdNotice"' in html
+    assert "function forcePasswordChange" in html
+    assert "if (pwdForced) return;" in html
+    assert "openPwdDialog(false)" in html
+    assert "await forcePasswordChange()" in html
+
+
+def test_admin_page_builds_accounts_with_one_time_password():
+    """建号入口：表单 -> POST /api/admin/users，且**一次性口令必须落在页面上**。
+
+    服务端只存 bcrypt 哈希，口令一旦没显示出来就再也拿不回（只能再去点重置）——
+    所以这条断言盯的是"口令有没有真的出现在界面里 + 有没有说清只出现这一次"，
+    而不是"有没有调这个接口"。
+    """
+    html = read_page("admin")
+
+    assert 'id="newUserName"' in html
+    assert 'id="newUserEmail"' in html
+    assert 'id="newUserRole"' in html
+    assert 'id="newUserBtn"' in html
+    assert 'id="newUserResult"' in html
+    assert "api('/api/admin/users'" in html
+    assert "只显示这一次" in html
+
+
 def test_index_has_forced_password_change_gate():
     """首页的强制改密闸门：元素、文案位、以及"关不掉"那一行守卫都得在。
 
@@ -367,3 +401,26 @@ def test_index_pwd_flow_behaviour_assertions_pass():
         check=False,
     )
     assert result.returncode == 0, f"首页流程断言失败：\n{result.stdout}\n{result.stderr}"
+
+
+def test_admin_pwd_flow_behaviour_assertions_pass():
+    """用 Node 驱动后台的**真实脚本**，验证闸门与建号两件事的行为。
+
+    后台是权限最高的页面，而它有两个"看起来对、实际会漏"的地方：被闸住的管理员
+    如果照常去拉 /api/admin/*（只会拿到一串 403），界面就成了空壳；建号返回的一次性
+    口令如果不落在页面上，它在库里就再也拿不回来。两条都只有真跑一遍才守得住。
+    """
+    binary = _node_binary()
+    if binary is None:
+        pytest.skip("本机没有可用的 node，跳过后台流程断言")
+
+    script = Path(__file__).resolve().parent / "admin_pwd_flow_check.js"
+    result = subprocess.run(
+        [binary, str(script), str(PAGES["admin"])],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, f"后台流程断言失败：\n{result.stdout}\n{result.stderr}"

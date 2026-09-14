@@ -60,7 +60,10 @@ def test_readme_test_count_matches_reality(request):
 
     assert actual == documented, (
         f"README 徽章写的是 {documented} 项，实际执行 {actual} 项 —— "
-        "请把 README 里的测试数一并更新（徽章与正文两处都要改）"
+        "请把 README 里的测试数一并更新（徽章与正文两处都要改）。"
+        "注意**别用裸数字替换**：README 里还有 HTTP 状态码这类同名数字"
+        "（例如登录限流的 429、限流配置里的 300），按数字全局替换会把它一起改掉。"
+        "用带上下文的片段替换（`tests-<N>%20passed`、`运行测试（<N> 项`）并断言恰好命中 1 处。"
     )
 
     for pattern in BODY_COUNT_PATTERNS:
