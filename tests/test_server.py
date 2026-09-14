@@ -3,17 +3,18 @@
 **全部用桩**：不启动真实容器、不调用真实 API。
 接口这一层的职责只是「接上传 / 跑循环 / 结构化返回」，
 验证它不该需要真的跑一次模型。
+
+多用户改造后业务接口都要登录态：``api`` 夹具（tests/conftest.py 里）是「现注册
+alice 并自动带 token 的客户端包装」，用例里不必到处写 auth 头；``loaded_client``
+在此之上再传一份小 CSV。权限与隔离本身的用例在 ``tests/test_isolation.py``。
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src import server as server_module
-from src.agent.tools import ToolRuntime
 from src.session import Session
 from tests.conftest_agent import (
     ScriptedClient,
@@ -27,20 +28,24 @@ from tests.conftest_agent import (
 
 
 @pytest.fixture
-def client(monkeypatch, tmp_path):
-    """每个测试用独立的 storage 目录，避免相互污染。
+def client():
+    """匿名 TestClient（公开接口 + 全局异常兜底用例用）。
 
     `raise_server_exceptions=False`：TestClient 默认会把服务端异常再抛一遍，
     但我们就是要测「全局异常处理器是否把它拍平成 JSON」，所以关掉重抛。
+    本模块的 ``api`` / ``loaded_client`` 由 conftest 提供，它们请求的 ``client``
+    会解析到这份模块级定义。
     """
-    monkeypatch.setattr(server_module, "session", Session(tmp_path / "session"))
     return TestClient(server_module.app, raise_server_exceptions=False)
 
 
 @pytest.fixture
-def loaded_client(client, monkeypatch, tmp_path):
-    """已上传一份数据、且 LLM/执行器都换成桩的客户端。"""
-    resp = client.post(
+def loaded_client(api):
+    """已上传一份数据、且 LLM/执行器都换成桩的客户端。
+
+    上传走真实的 ``POST /api/upload``（Schema 提取是本地的 pandas，真实跑没问题）。
+    """
+    resp = api.post(
         "/api/upload",
         files=[
             (
@@ -54,7 +59,7 @@ def loaded_client(client, monkeypatch, tmp_path):
         ],
     )
     assert resp.status_code == 200, resp.text
-    return client
+    return api
 
 
 def stub_clients(responses, results):
@@ -62,6 +67,12 @@ def stub_clients(responses, results):
         lambda: ScriptedClient(responses),
         lambda: StubExecutor(results),
     )
+
+
+def _stub_agent(monkeypatch, responses, results) -> None:
+    client_stub, executor_stub = stub_clients(responses, results)
+    monkeypatch.setattr(server_module, "get_client", client_stub)
+    monkeypatch.setattr(server_module, "get_executor", executor_stub)
 
 
 # ------------------------------------------------------------------ 基础
@@ -79,10 +90,19 @@ class TestHealth:
         monkeypatch.setattr(server_module.settings, "api_key", "", raising=False)
         assert client.get("/api/health").status_code == 200
 
+    def test_public_health_leaks_no_user_data(self, loaded_client):
+        """公开接口不能带任何用户数据：文件清单与运行目录都挪去了 /api/workspace。"""
+        data = loaded_client.client.get("/api/health").json()
+        assert "files" not in data, f"公开健康检查泄露了文件清单：{data}"
+        assert "runs_dir" not in data, f"公开健康检查泄露了运行目录：{data}"
+
     def test_lists_loaded_files(self, loaded_client):
-        data = loaded_client.get("/api/health").json()
+        data = loaded_client.get("/api/workspace").json()
         assert [f["name"] for f in data["files"]] == ["销售.csv"]
         assert data["files"][0]["rows"] == 1
+
+    def test_workspace_requires_login(self, client):
+        assert client.get("/api/workspace").status_code == 401
 
 
 class TestIndex:
@@ -96,15 +116,15 @@ class TestIndex:
 
 
 class TestUpload:
-    def test_rejects_unsupported_type(self, client):
-        resp = client.post(
+    def test_rejects_unsupported_type(self, api):
+        resp = api.post(
             "/api/upload", files=[("files", ("x.pdf", b"%PDF", "application/pdf"))]
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 400, resp.text
         assert "不支持的文件类型" in resp.json()["detail"]
 
     def test_returns_schema_summary(self, loaded_client):
-        data = loaded_client.get("/api/health").json()
+        data = loaded_client.get("/api/workspace").json()
         file_info = data["files"][0]
         assert file_info["path"] == "/data/销售.csv", "必须是容器内路径"
         assert [c["name"] for c in file_info["columns"]] == ["地区", "销售额"]
@@ -113,37 +133,44 @@ class TestUpload:
         loaded_client.post(
             "/api/upload", files=[("files", ("新.csv", b"a\n1\n", "text/csv"))]
         )
-        data = loaded_client.get("/api/health").json()
+        data = loaded_client.get("/api/workspace").json()
         assert [f["name"] for f in data["files"]] == ["新.csv"]
+
+    def test_upload_registers_datasets_row(self, loaded_client):
+        """上传后 datasets 表里要有对应行 —— 表是可查询索引，工作区是真相。"""
+        rows = loaded_client.get("/api/datasets").json()["datasets"]
+        assert [r["filename"] for r in rows] == ["销售.csv"]
+        assert rows[0]["n_rows"] == 1
+        assert rows[0]["n_cols"] == 2
 
 
 # ------------------------------------------------------------------ 提问
 
 
 class TestAsk:
-    def test_requires_uploaded_data(self, client):
-        resp = client.post("/api/ask", json={"question": "多少行？"})
-        assert resp.status_code == 400
+    def test_requires_uploaded_data(self, api):
+        resp = api.post("/api/ask", json={"question": "多少行？"})
+        assert resp.status_code == 400, resp.text
         assert "上传" in resp.json()["detail"]
 
     def test_rejects_empty_question(self, loaded_client):
         assert loaded_client.post("/api/ask", json={"question": ""}).status_code == 422
 
     def test_happy_path_returns_answer_and_steps(self, loaded_client, monkeypatch):
-        client_stub, executor_stub = stub_clients(
+        _stub_agent(
+            monkeypatch,
             [
                 assistant_with_tools(tool_call("run_python", '{"code": "print(1)"}')),
                 assistant_text("答案：华东 100。"),
             ],
             [ok_result("华东 100")],
         )
-        monkeypatch.setattr(server_module, "get_client", client_stub)
-        monkeypatch.setattr(server_module, "get_executor", executor_stub)
 
         data = loaded_client.post("/api/ask", json={"question": "哪个地区最高？"}).json()
         assert data["answer"] == "答案：华东 100。"
         assert data["terminated_by"] == "answer"
         assert len(data["steps"]) == 1
+        assert data["session_id"] >= 1, "问答必须落进一个会话"
 
     def test_generated_code_is_returned_verbatim(self, loaded_client, monkeypatch):
         """代码要原样带给前端 —— 这是用户信任的来源，不能只给摘要。"""
@@ -175,15 +202,14 @@ class TestAsk:
         assert data["steps"][0]["calls"][0]["code"] == code
 
     def test_error_outcome_carries_status_and_traceback(self, loaded_client, monkeypatch):
-        client_stub, executor_stub = stub_clients(
+        _stub_agent(
+            monkeypatch,
             [
                 assistant_with_tools(tool_call("run_python", '{"code": "bad"}')),
                 assistant_text("我失败了"),
             ],
             [error_result(stderr="KeyError: 地区")],
         )
-        monkeypatch.setattr(server_module, "get_client", client_stub)
-        monkeypatch.setattr(server_module, "get_executor", executor_stub)
 
         data = loaded_client.post("/api/ask", json={"question": "q"}).json()
         outcome = data["steps"][0]["outcomes"][0]
@@ -203,15 +229,14 @@ class TestAsk:
     def test_no_host_path_leaks_to_frontend(self, loaded_client, monkeypatch, tmp_path):
         """给前端的 payload 里不能有宿主路径 —— 前端会上报错误、贴截图，
         宿主路径泄漏出去和泄漏进 Prompt 一样糟。"""
-        client_stub, executor_stub = stub_clients(
+        _stub_agent(
+            monkeypatch,
             [
                 assistant_with_tools(tool_call("run_python", '{"code": "x"}')),
                 assistant_text("ok"),
             ],
             [ok_result("不管怎样先输出点东西")],
         )
-        monkeypatch.setattr(server_module, "get_client", client_stub)
-        monkeypatch.setattr(server_module, "get_executor", executor_stub)
 
         raw = loaded_client.post("/api/ask", json={"question": "q"}).text
         assert str(tmp_path) not in raw
@@ -221,32 +246,31 @@ class TestAsk:
 
 
 class TestArtifact:
-    def test_serves_existing_artifact(self, client, monkeypatch, tmp_path):
-        session = Session(tmp_path / "s2")
-        monkeypatch.setattr(server_module, "session", session)
-        chart = session.artifacts_dir / "chart.png"
+    def test_serves_existing_artifact(self, loaded_client):
+        chart = loaded_client.workspace.artifacts_dir / "chart.png"
         chart.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 20)
 
-        resp = client.get("/api/artifact/chart.png")
-        assert resp.status_code == 200
+        resp = loaded_client.get("/api/artifact/chart.png")
+        assert resp.status_code == 200, resp.text
         assert resp.content.startswith(b"\x89PNG")
 
-    def test_missing_artifact_is_404(self, client):
-        assert client.get("/api/artifact/nope.png").status_code == 404
+    def test_missing_artifact_is_404(self, api):
+        assert api.get("/api/artifact/nope.png").status_code == 404
+
+    def test_artifact_without_token_is_401(self, client):
+        assert client.get("/api/artifact/chart.png").status_code == 401
 
     @pytest.mark.parametrize(
         "name",
         ["../../.env", "..%2F..%2F.env", "subdir/../../../etc/passwd", ".."],
     )
-    def test_path_traversal_is_blocked(self, client, monkeypatch, tmp_path, name):
+    def test_path_traversal_is_blocked(self, api, tmp_path, name):
         """前端传来的文件名是不可信输入 —— 越界必须在服务端拦住。"""
-        session = Session(tmp_path / "s3")
-        monkeypatch.setattr(server_module, "session", session)
         # 在 storage 之外放一个"机密文件"，穿越成功就能读到它
         secret = tmp_path / ".env"
         secret.write_text("API_KEY=super-secret", encoding="utf-8")
 
-        resp = client.get(f"/api/artifact/{name}")
+        resp = api.get(f"/api/artifact/{name}")
         assert resp.status_code in (404, 400), f"{name} 竟然返回 {resp.status_code}"
         assert b"super-secret" not in resp.content
 
@@ -254,8 +278,13 @@ class TestArtifact:
 class TestReset:
     def test_clears_files(self, loaded_client):
         loaded_client.post("/api/reset")
-        data = loaded_client.get("/api/health").json()
+        data = loaded_client.get("/api/workspace").json()
         assert data["files"] == []
+
+    def test_reset_clears_datasets_table(self, loaded_client):
+        assert loaded_client.get("/api/datasets").json()["datasets"] != []
+        loaded_client.post("/api/reset")
+        assert loaded_client.get("/api/datasets").json()["datasets"] == []
 
 
 # ------------------------------------------------------------------ 会话层
@@ -360,8 +389,6 @@ class TestUncaughtExceptionHandler:
     """
 
     def test_unhandled_exception_returns_json_not_plain_text(self, loaded_client, monkeypatch):
-        from src.agent.loop import run_agent
-
         def boom(*args, **kwargs):
             # ValueError 不会被 ask() 里的 except RuntimeError 抓住 —— 必须确认
             # 它能一路冒到全局处理器，最终落到 JSON 而不是 Starlette 的纯文本 500。

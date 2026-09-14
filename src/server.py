@@ -1,7 +1,18 @@
 """FastAPI 服务：把 Agent 包成一个本地网页。
 
-接口很薄 —— 真正的逻辑全在 agent/sandbox/schema 三层里，这里只做三件事：
-接上传、跑一次循环、把执行轨迹结构化后交给前端。
+接口很薄 —— 真正的逻辑全在 agent/sandbox/schema 三层里，这里只做几件事：
+接上传、跑一次循环、把执行轨迹结构化后交给前端，并把聊天与轨迹落库。
+
+多用户改造后的职责边界（与项目一 rag-knowledge-base/src/server.py 同构）：
+
+- **登录态**：``/``、``/api/health`` 与 ``/api/auth/*`` 之外的全部接口都要
+  Bearer token（``get_current_user``）；
+- **数据隔离**：上传 / 提问 / 产物 / 数据集全部限定在当前用户自己的
+  ``Session``（``get_workspace(user.id)``）里，跨用户一律 404 不泄露存在性；
+- **会话持久化**：聊天记录存 SQLite（sessions / messages），执行轨迹塞进
+  assistant 消息的 ``meta`` —— 管理员看轨迹的唯一来源，不再单独建表；
+- **健康检查分层**：公开的 ``/api/health`` 只说全局状态，用户自己的文件与
+  运行目录走需要登录的 ``/api/workspace``。
 
 一个刻意的设计：**执行器与 LLM 客户端都是懒加载的**。
 模块导入时不构造它们，页面上传阶段也不需要。这样即使还没配 API Key，
@@ -16,31 +27,38 @@ ServerErrorMiddleware 在 DEBUG=False 时会返 21 字节纯文本 "Internal Ser
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session as OrmSession
 
+from .admin_api import router as admin_router
 from .agent.loop import AgentResult, run_agent
 from .agent.tools import ToolRuntime
 from .auth.api import router as auth_router
 from .auth.db import init_db
-from .config import Settings
+from .auth.deps import get_current_user, get_db
+from .auth.models import ChatSession, Dataset, Message, User
+from .config import settings
+from .datasets import dataset_payload, delete_dataset, sync_datasets
 from .llm.client import ZhipuClient
 from .sandbox.factory import build_executor
 from .schema.extractor import SchemaError
-from .session import Session
+from .serializers import message_payload, session_payload
+from .workspaces import get_workspace
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = PROJECT_ROOT / "web"
-STORAGE_ROOT = PROJECT_ROOT / "storage" / "session"
 
 
 @asynccontextmanager
@@ -57,6 +75,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 
 # ---------------------------------------------------------------- 全局异常兜底
@@ -80,11 +99,13 @@ def _unhandled_exception(_request, exc: Exception) -> JSONResponse:
         content={"detail": f"服务器内部错误：{exc!s}"[:500]},
     )
 
-settings = Settings.from_env()
-session = Session(STORAGE_ROOT)
-
 
 # ---------------------------------------------------------------- 懒加载依赖
+#
+# settings 用 src.config 里的**全局单例**，这里绝不再造一个 Settings.from_env()。
+# auth/db.py 与 auth/security.py 都是 `from .config import settings`，两份实例会
+# 让「测试 monkeypatch server.settings 的 storage_root」影响不到建库路径 ——
+# 那是典型的「测试过了、线上不生效」。项目一就是这么做的，保持一致。
 
 
 @lru_cache(maxsize=1)
@@ -112,7 +133,29 @@ def reset_caches() -> None:
 
 
 class AskRequest(BaseModel):
+    """问答请求。``session_id`` 缺省时自动开一个新会话。"""
+
     question: str = Field(min_length=1, max_length=2000)
+    session_id: int | None = None
+
+
+class SessionCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+
+
+class SessionRename(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+# ---------------------------------------------------------------- 会话工具
+
+
+def _own_session(db: OrmSession, user: User, session_id: int) -> ChatSession:
+    """取属于当前用户的会话；不存在或不属于本人一律 404（不泄露存在性）。"""
+    chat_session = db.get(ChatSession, session_id)
+    if chat_session is None or chat_session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return chat_session
 
 
 # ---------------------------------------------------------------- 页面
@@ -126,12 +169,16 @@ def index() -> HTMLResponse:
     return HTMLResponse(page.read_text(encoding="utf-8"))
 
 
-# ---------------------------------------------------------------- 接口
+# ---------------------------------------------------------------- 基础接口
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    """健康检查。**不抛异常** —— 缺配置也要能返回状态，让前端把话说清楚。"""
+    """公开的健康检查。**只讲全局状态，不碰任何用户数据**。
+
+    刻意不再返回 ``files`` / ``runs_dir`` —— 那是某个用户的工作区内容，
+    公开接口带出去就是泄露。用户自己的那份挪到 ``/api/workspace``。
+    """
     executor_ok, executor_note = True, ""
     try:
         executor = get_executor()
@@ -146,30 +193,70 @@ def health() -> dict[str, Any]:
         "executor": settings.executor,
         "executor_ok": executor_ok,
         "executor_note": executor_note,
-        "files": [_file_info(s) for s in session.schemas],
-        "runs_dir": str(session.runs_dir),
     }
 
 
+@app.get("/api/workspace")
+def read_workspace(user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """当前用户自己的工作区概览：已加载的数据文件与运行目录。"""
+    workspace = get_workspace(user.id)
+    return {
+        "files": [_file_info(schema) for schema in workspace.schemas],
+        "runs_dir": str(workspace.runs_dir),
+    }
+
+
+# ---------------------------------------------------------------- 上传 / 提问
+
+
 @app.post("/api/upload")
-async def upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+async def upload(
+    files: list[UploadFile] = File(...),
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict[str, Any]:
     uploads: list[tuple[str, bytes]] = []
     for item in files:
         uploads.append((item.filename or "data", await item.read()))
 
+    workspace = get_workspace(user.id)
     try:
-        schemas = session.replace_files(uploads)
+        schemas = workspace.replace_files(uploads)
     except SchemaError as exc:
-        session.last_error = str(exc)
+        workspace.last_error = str(exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"files": [_file_info(s) for s in schemas]}
+    # 工作区是真相，表只是可查询的索引 —— 上传后立刻回写
+    sync_datasets(db, user.id, workspace)
+    return {"files": [_file_info(schema) for schema in schemas]}
 
 
 @app.post("/api/ask")
-def ask(payload: AskRequest) -> dict[str, Any]:
-    """跑一次完整的工具调用循环。这是唯一会真正执行代码的接口。"""
-    if not session.files:
+def ask(
+    payload: AskRequest,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict[str, Any]:
+    """跑一次完整的工具调用循环。这是唯一会真正执行代码的接口。
+
+    执行轨迹（``steps``）与产物列表会随 assistant 消息一起写进 ``meta`` ——
+    这是管理员事后查看「模型到底跑了什么」的唯一来源。
+    """
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    if payload.session_id is None:
+        chat_session = ChatSession(user_id=user.id, title=question[:50])
+        db.add(chat_session)
+        db.commit()
+        db.refresh(chat_session)
+    else:
+        chat_session = _own_session(db, user, payload.session_id)
+
+    # 只挂当前用户自己的文件 —— 跨用户隔离就落在这里
+    workspace = get_workspace(user.id)
+    if not workspace.files:
         raise HTTPException(status_code=400, detail="请先上传数据文件")
 
     try:
@@ -185,10 +272,10 @@ def ask(payload: AskRequest) -> dict[str, Any]:
 
     runtime = ToolRuntime(
         executor=executor,
-        schemas=session.schemas,
-        data_files=session.files,
-        artifact_dir=session.artifacts_dir,
-        run_dir_factory=session.new_run_dir,
+        schemas=workspace.schemas,
+        data_files=workspace.files,
+        artifact_dir=workspace.artifacts_dir,
+        run_dir_factory=workspace.new_run_dir,
         # 与执行器共用同一份限额配置 —— 前端跑的单次执行和沙箱层的
         # 超时/输出上限必须是同一个数，否则两边会对不上。
         timeout_seconds=settings.executor_config.timeout_seconds,
@@ -197,10 +284,10 @@ def ask(payload: AskRequest) -> dict[str, Any]:
 
     try:
         result = run_agent(
-            payload.question,
+            question,
             client=client,
             runtime=runtime,
-            schemas=session.schemas,
+            schemas=workspace.schemas,
             max_steps=settings.agent_max_steps,
             max_repeat_failures=settings.max_repeat_failures,
             history_max_chars=settings.history_max_chars,
@@ -209,22 +296,155 @@ def ask(payload: AskRequest) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return _serialize(result)
+    answer = _serialize(result)
+    db.add(Message(session_id=chat_session.id, role="user", content=question))
+    db.add(
+        Message(
+            session_id=chat_session.id,
+            role="assistant",
+            content=result.answer,
+            # 轨迹与产物一起入库：管理员审计、用户回看历史都靠它
+            meta=json.dumps(
+                {
+                    "steps": answer["steps"],
+                    "artifacts": answer["artifacts"],
+                    "terminated_by": answer["terminated_by"],
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    if chat_session.title == "新会话":
+        chat_session.title = question[:50]
+    chat_session.updated_at = datetime.now()
+    db.commit()
+
+    return {**answer, "session_id": chat_session.id}
 
 
 @app.get("/api/artifact/{name}")
-def artifact(name: str) -> FileResponse:
-    """取产物文件（图表等）。路径穿越由 session.artifact_path 拦住。"""
-    path = session.artifact_path(name)
+def artifact(name: str, user: User = Depends(get_current_user)) -> FileResponse:
+    """取产物文件（图表等）。归属天然成立：只看当前用户自己的产物目录；
+    路径穿越由 session.artifact_path 拦住。"""
+    path = get_workspace(user.id).artifact_path(name)
     if path is None:
         raise HTTPException(status_code=404, detail=f"产物不存在：{name}")
     return FileResponse(path)
 
 
 @app.post("/api/reset")
-def reset() -> dict[str, Any]:
-    session.clear_files()
+def reset(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)
+) -> dict[str, Any]:
+    workspace = get_workspace(user.id)
+    workspace.clear_files()
+    # 工作区空了 → datasets 表里该用户的行走「工作区里已消失」这条分支全删
+    sync_datasets(db, user.id, workspace)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- 会话
+
+
+@app.get("/api/sessions")
+def list_sessions(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)
+) -> dict:
+    sessions = (
+        db.query(ChatSession)
+        .filter_by(user_id=user.id)
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+        .all()
+    )
+    return {"sessions": [session_payload(s) for s in sessions]}
+
+
+@app.post("/api/sessions")
+def create_session(
+    payload: SessionCreate | None = None,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    chat_session = ChatSession(
+        user_id=user.id,
+        title=(payload.title.strip() if payload and payload.title else None) or "新会话",
+    )
+    db.add(chat_session)
+    db.commit()
+    db.refresh(chat_session)
+    return session_payload(chat_session)
+
+
+@app.get("/api/sessions/{session_id}/messages")
+def list_messages(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    chat_session = _own_session(db, user, session_id)
+    messages = (
+        db.query(Message).filter_by(session_id=chat_session.id).order_by(Message.id).all()
+    )
+    return {
+        "session": session_payload(chat_session),
+        "messages": [message_payload(m) for m in messages],
+    }
+
+
+@app.patch("/api/sessions/{session_id}")
+def rename_session(
+    session_id: int,
+    payload: SessionRename,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    chat_session = _own_session(db, user, session_id)
+    chat_session.title = payload.title.strip()
+    db.commit()
+    return session_payload(chat_session)
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    chat_session = _own_session(db, user, session_id)
+    db.delete(chat_session)  # messages 级联删除
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- 数据集
+
+
+@app.get("/api/datasets")
+def list_datasets(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)
+) -> dict:
+    rows = (
+        db.query(Dataset)
+        .filter(Dataset.user_id == user.id)
+        .order_by(Dataset.id)
+        .all()
+    )
+    return {"datasets": [dataset_payload(row) for row in rows]}
+
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset_endpoint(
+    dataset_id: int,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """删掉自己的一个数据集：文件（尽力而为）→ 内存工作区 → 表行。"""
+    row = db.get(Dataset, dataset_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    workspace = get_workspace(user.id)
+    return delete_dataset(db, workspace, row)
 
 
 # ---------------------------------------------------------------- 序列化
@@ -283,4 +503,4 @@ def _serialize(result: AgentResult) -> dict[str, Any]:
     }
 
 
-__all__ = ["app", "reset_caches", "session", "settings"]
+__all__ = ["app", "reset_caches", "settings"]

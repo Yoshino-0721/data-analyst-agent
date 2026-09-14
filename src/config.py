@@ -83,8 +83,12 @@ class Settings:
     storage_root: Path = field(
         default_factory=lambda: Path(__file__).resolve().parent.parent / "storage"
     )
-    """运行期落盘目录（SQLite 库 storage/app.db、JWT 密钥 storage/secret.key）。
-    注意与 server.STORAGE_ROOT（storage/session，单次运行现场）区分开。
+    """运行期落盘目录。下面全部挂在它里面：
+
+    - SQLite 库 ``app.db``、JWT 密钥 ``secret.key``；
+    - 每个用户的会话现场 ``session/users/<uid>/{data,artifacts,runs}/``
+      （由 ``src/workspaces.py::user_root`` 推导，不再有单独的 STORAGE_ROOT）。
+
     测试里一律由夹具指向 tmp 目录，绝不让用例碰真实 storage/。"""
 
     @classmethod
@@ -124,9 +128,11 @@ class Settings:
 
 
 # 全局单例：auth 包（与项目一 rag-knowledge-base 同构）内部按
-# `from src.config import settings` 取存储路径，所以配置模块必须导出一个实例，
-# 而不能只在 server.py 里现造一个。server.py 仍持有自己的 `settings`，
-# 字段语义与默认值与这里完全一致。
+# `from src.config import settings` 取存储路径，所以配置模块必须导出一个实例。
+# server.py 也 `from .config import settings` 复用同一个对象 —— 全仓**只有一个**
+# Settings 实例。曾经 server.py 自己造过第二个，结果测试 monkeypatch
+# server.settings.storage_root 影响不到 auth 的建库路径，写出「测试过了、
+# 线上不生效」的假绿。
 settings = Settings.from_env()
 
 
