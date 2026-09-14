@@ -108,7 +108,7 @@ def test_render_helpers_stay_top_level_for_node_check():
 # ---------------------------------------------------------------- 设计令牌（docs/design-tokens.md）
 
 # 模块 11 逐页收敛：改完一页就把它加进来，之后不许再退回硬编码颜色。
-CONVERGED_PAGES = ("login", "index")
+CONVERGED_PAGES = ("login", "index", "admin")
 
 
 @pytest.mark.parametrize("name", sorted(PAGES))
