@@ -568,7 +568,7 @@ def test_dark_pages_share_the_same_accent_surface_text_tokens():
 
 # 已收敛"取值"的页面：逐页加锁（pass 2 顺序 login -> index -> admin）。
 # 空元组是**刻意的起点** —— 机制先落地，页面做完一页加一页。
-LENGTH_TOKEN_PAGES = ()
+LENGTH_TOKEN_PAGES = ("login",)
 
 # 只看这几类属性：间距 / 字号 / 圆角。其余（宽度、定位、阴影、行高…）不在本轮范围。
 LENGTH_PROPS = ("padding", "margin", "gap", "border-radius", "font-size")
