@@ -42,7 +42,7 @@ pip install -e .
 python -m uvicorn src.server:app --port 8123
 
 # 3. 打开 http://127.0.0.1:8123 → 跳到登录页
-#    默认管理员 admin / admin123（首次启动自动引导，登录后请立刻改密）
+#    管理员 admin：口令是你设的 ADMIN_PASSWORD，或启动日志横幅里的随机口令
 #    其它成员在登录页切到「注册」自己开账号
 
 # 或者不起服务，直接命令行端到端跑一次：
@@ -93,17 +93,25 @@ python scripts/demo_agent.py
 
 ### 默认管理员
 
-全新部署（`users` 表为空）时，服务启动会自动引导一个管理员：
+全新部署（`users` 表为空）时，服务启动会自动引导一个管理员账号 `admin`。
+**这里没有"默认口令"这种东西** —— 一个全站可见的固定口令，等于把"部署到公网后
+忘记改"变成必然事件。口令只有两条来源：
 
-```
-用户名  admin
-口令    admin123
-邮箱    admin@example.com
-```
+| 情况 | 行为 |
+|---|---|
+| 不设 `ADMIN_PASSWORD`（默认） | 系统**生成随机强口令**，在启动日志里用醒目横幅打印**一次**；该账号 `must_change_password=True`，改密前除 `/api/auth/me` 与改密接口外**一律 403**，且新口令必须够强（防止一次改成 `123456` 绕过整套策略） |
+| 设了 `ADMIN_PASSWORD` | 直接用它，不强制改密。但**弱口令会让服务拒绝启动**：要求 ≥12 位、至少 3 类字符（大小写/数字/符号），且不在常见弱口令表里（`admin123` 会被明确拒绝并打印生成命令） |
 
-⚠️ **使用默认口令时启动日志会打出警告，请登录后立刻在界面上改密。**
-也可以用环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL` 指定初始账号。
+`ADMIN_USERNAME` / `ADMIN_EMAIL` 可改引导出来的用户名与邮箱。
 引导是幂等的：表里已有用户就不会重复创建。
+
+> 拿到随机口令后，除了在网页上改，也可以直接改：
+> ```bash
+> curl -X POST http://127.0.0.1:8123/api/auth/change-password \
+>   -H "Content-Type: application/json" \
+>   -H "Authorization: Bearer <登录接口返回的 token>" \
+>   -d '{"old_password":"<横幅里的口令>","new_password":"<新的强口令>"}'
+> ```
 
 ### 认证方式
 
@@ -224,12 +232,12 @@ python scripts/check_docker.py --build   # 顺手构建沙箱镜像
 | `HISTORY_MAX_CHARS` | `12000` | 循环内历史消息的字符预算 |
 | `HISTORY_KEEP_TURNS` | `4` | 无论如何完整保留的最后 N 轮 |
 | `EXECUTOR` | `docker` | `docker`（默认，有隔离）或 `local`（**仅本机调试，无隔离**） |
-| `APP_ENV` | `dev` | 非 dev 环境下 `local` 执行器拒绝构造 |
-| `JWT_SECRET` | 自动生成 | JWT 签名密钥。不设则随机生成并持久化到 `storage/secret.key`；**多实例部署必须显式设置且保持一致** |
+| `APP_ENV` | `dev` | `dev` / `production`。非 dev 有两重效果：`local` 执行器拒绝构造，且**强制要求外部注入 `JWT_SECRET`**（缺了直接拒绝启动） |
+| `JWT_SECRET` | dev 下自动生成 | JWT 签名密钥。**`APP_ENV != dev` 时必填，缺了直接拒绝启动**；dev 下不设则随机生成并持久化到 `storage/secret.key`。多实例部署必须显式设置且保持一致 |
 | `JWT_EXPIRE_HOURS` | `168` | 登录态有效期（小时），默认 7 天 |
 | `ADMIN_USERNAME` | `admin` | 首次启动引导的管理员用户名 |
 | `ADMIN_EMAIL` | `admin@example.com` | 首次启动引导的管理员邮箱 |
-| `ADMIN_PASSWORD` | `admin123` | 首次启动引导的管理员口令；用默认值时启动日志会警告 |
+| `ADMIN_PASSWORD` | 空（随机生成） | 首次启动引导的管理员口令。**没有默认口令**：留空则生成随机强口令、启动横幅打印一次并强制首次改密；填入弱口令（<12 位 / <3 类字符 / 命中弱口令表）会**拒绝启动** |
 | `STORAGE_DIR` | `<仓库>/storage` | 落盘根目录（SQLite、各用户工作区、`secret.key`） |
 | `AUTH_DB_PATH` | `<STORAGE_DIR>/app.db` | 用户库路径，特殊部署可单独指定 |
 
