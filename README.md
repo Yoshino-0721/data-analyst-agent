@@ -57,7 +57,7 @@ python -m uvicorn src.server:app --port 8123
 
 # 3. 打开 http://127.0.0.1:8123 → 跳到登录页
 #    管理员 admin：口令是你设的 ADMIN_PASSWORD，或启动日志横幅里的随机口令
-#    其它成员在登录页切到「注册」自己开账号
+#    自助注册默认关闭；开通成员需设 ALLOW_REGISTRATION=true 并重启
 
 # 或者不起服务，直接命令行端到端跑一次：
 python scripts/demo_agent.py
@@ -353,6 +353,9 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 | `ADMIN_USERNAME` | `admin` | 首次启动引导的管理员用户名 |
 | `ADMIN_EMAIL` | `admin@example.com` | 首次启动引导的管理员邮箱 |
 | `ADMIN_PASSWORD` | 空（随机生成） | 首次启动引导的管理员口令。**没有默认口令**：留空则生成随机强口令、启动横幅打印一次并强制首次改密；填入弱口令（<12 位 / <3 类字符 / 命中弱口令表）会**拒绝启动** |
+| `ALLOW_REGISTRATION` | `false` | 是否允许自助注册。**默认关闭**：公网部署下任何人注册成功都会消耗**站点共用**的 API Key 额度。要开通成员时临时设为 `true` 并重启，开通完改回 `false` |
+| `LOGIN_MAX_FAILURES` | `5` | 同一账号连续登录失败多少次后锁定 |
+| `LOGIN_LOCK_SECONDS` | `300` | 锁定时长（秒）。锁定期内登录返回 429 + `Retry-After` |
 | `STORAGE_DIR` | `<仓库>/storage` | 落盘根目录（SQLite、各用户工作区、`secret.key`） |
 | `AUTH_DB_PATH` | `<STORAGE_DIR>/app.db` | 用户库路径，特殊部署可单独指定 |
 
