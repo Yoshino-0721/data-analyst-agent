@@ -76,6 +76,11 @@ class Settings:
 
     # --- 执行器（与 sandbox.factory.RuntimeSettings 协议对齐）---
     executor: str = "docker"
+    # 运行环境，取自 APP_ENV。**这是全项目唯一的环境判定字段**：
+    # sandbox.factory 用它决定是否允许构造 local 执行器（非 dev 直接拒绝），
+    # auth.security.is_production() 也读它来决定「生产必须外部注入 JWT_SECRET」。
+    # ⚠️ 不要为了和项目一的 `app_env` 对齐而新增同义字段 —— 两个真相来源会让
+    # 「APP_ENV=production 但 local 执行器仍被放行」这类分叉静默发生。
     env: str = "dev"
     executor_config: ExecutorConfig = field(default_factory=ExecutorConfig)
 

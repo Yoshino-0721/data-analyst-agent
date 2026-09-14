@@ -61,7 +61,15 @@ def is_production() -> bool:
     """``APP_ENV`` 不是 dev / test 即视为生产环境。
 
     默认 dev，保证 clone 下来就能跑；生产部署必须显式设 ``APP_ENV=production``
-    （Docker 镜像里已经设好），此时密钥与口令的强制要求才生效。
+    （docker-compose.yml 里已经设好），此时密钥与口令的强制要求才生效。
+
+    ⚠️ **这里读的是 ``settings.env``，不要"为了和项目一对齐"再新增一个
+    ``settings.app_env`` 字段。** 项目一的配置类里那个字段确实叫 ``app_env``，
+    但本项目**早就有了** ``Settings.env``，而且 `sandbox.factory` 已经在用它做
+    「非 dev 拒绝构造 local 执行器」的判断。再加一个同义字段就是两个真相来源：
+    迟早会出现 ``APP_ENV=production`` 而执行器仍按 ``env=dev`` 放行 local
+    这类分叉 —— 那种 bug 不会报错，只会静默失去隔离。
+    同构的是**语义**（谁是生产环境、生产要强制什么），不是字段名。
     """
     try:
         from src.config import settings
