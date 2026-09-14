@@ -5,19 +5,26 @@
 
 ## 0. 一句话现状
 
-两个仓库都已完成「多用户团队平台改造 + 设计令牌 pass 1 + E2E 真实闭环 + T5/R4/T1/R3
-四条最小修复」，测试全绿，工作区干净，**从未 push**。剩下的是"取值收敛 pass 2"、
-两份清单里的其余条目、以及工作区迁移的执行。
+两个仓库都已完成「多用户团队平台改造 + 设计令牌 pass 1 与 pass 2 + E2E 真实闭环 +
+T5/R4/T1/R3/T2/T7/R2 七条最小修复」，测试全绿，工作区干净，**从未 push**。
+剩下的是 `docs/optimization-backlog.md` 里的其余条目（T3/T4/T6/T8、R1/R5、U1–U4、N1）；
+**模块 13（工作区迁移）已决定取消、不执行**（2026-09-14，理由见下方表格后的说明）。
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `b5aa358` | `master` `9686ab9` |
-| 测试 | **470 通过** | **660 通过**（17 deselected，Docker 集成默认跳过） |
+| 分支 / HEAD | `main` `4934b93` | `master` `bb571de` |
+| 测试 | **471 通过** | **661 通过**（17 deselected，Docker 集成默认跳过） |
 | 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**，`refs/remotes` 为空 | 无 remote |
 | 端口 | 8000 | 8123 |
 
 > ⚠️ `.git` 是历史孤本。任何迁移/清理前先 `git bundle create --all`（见
 > `docs/migration-plan.md` 的 Phase 0.4）。
+
+> 🚫 **模块 13（工作区迁移）= 取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
+> 风险是 `.git` 历史孤本（两个仓库**从未 push**；p1 那个 `origin` 从未 fetch 过；
+> 当时本机网络不可达，`git ls-remote` 核不了 Q1），而 `D:\代码项目\` 现状完全可用 ——
+> 不值得为"好看"冒历史丢失的风险。`docs/migration-plan.md` **保留作参考、不删**：
+> 它记录的是"若要迁移该怎么做"，不是待办；将来真要迁，仍按它的 Phase 0.4 先 bundle 备份。
 
 ## 1. 已完成
 
@@ -27,24 +34,31 @@
 | 6.5 / 7 / 8 / 9 | 管理员建号（一次性口令 + 强口令校验）、孤儿会话、上传体积上限、安全加固（无默认口令 / JWT_SECRET / 本地执行器声明） |
 | C3 | 前端强制改密闸门（login / index / admin 三页）+ 后台「新建账号」表单；3 份 Node 行为断言（17 / 20 / 41 项） |
 | 模块 11 pass 1 | 设计令牌**颜色层**收敛：6 个页面 `:root` 之外的颜色字面量 **222 + 6 → 0**；`docs/design-tokens.md` 定稿（三项决策已拍） |
+| 模块 11 pass 2 | **取值**收敛：admin（试金石）→ index，间距 / 字号 / 圆角全部走令牌（映射表在 `docs/design-tokens.md` §1.3 / §1.4）；`LENGTH_TOKEN_PAGES` 棘轮把 login / index / admin 三页锁死（含防"空转"的自测） |
 | 模块 12 | 只读审计 18 条 → `docs/optimization-backlog.md` |
-| 模块 13 | 工作区迁移方案 → `docs/migration-plan.md` |
+| 模块 13 | 工作区迁移**方案**已完成（→ `docs/migration-plan.md`）；**执行已取消**（2026-09-14 决策，理由见 §0） |
 | E2E | `scripts/e2e_real.ps1`：真实服务闭环（随机管理员口令 → 强制改密 → 注册/建号 → 真实上传 → 真调 LLM → 越权 404 → 运行期文件确认）。**归档版实测 p1 31/31、p2 30/30** |
 | T5 | 登录节流表按 `last_seen` LRU 淘汰，内存上限真的生效（原回收条件永不命中） |
 | R4 | OOM 判定去掉裸词 `"killed"`（`/data/killed.csv` 曾被判成 OOM）；先红后绿 |
 | T1 | 模型调用显式 timeout/max_retries；上传端点改同步 `def`；查询端点加并发闸门（满员 429） |
 | R3 | 精排降级可见：`rerank_failed` / `rerank_error`（分类词）进响应，细节只进日志 |
+| T2 | 上传落盘改原子写（同目录 `.incoming` + `os.replace`，**不涉及删除** —— 本机删除有钩子）；文件名归一化复用 `src/paths.py:safe_target_name`（全仓只留一处实现） |
+| T7 | 重置口令两条路径一律置 `must_change_password=True`（**刻意不做强度校验**：边界在闸门上，"管理员下发口头临时码"是合理场景）；前端重置抽屉补了提示文案 |
+| R2 | 未预期异常统一「固定文案 + 请求 id」（细节只进日志）：p1 从 21 字节纯文本升级为 JSON，p2 去掉异常细节泄露。第 1 条先落 `src/request_id.py` 机制（两仓库逐字相同），第 2 条再动错误结构 |
 
-## 2. 未完成
+## 2. 未完成与已结清（✅ / 🚫 开头的条目已结清，原文留档）
 
-1. **模块 11 pass 2（取值收敛）** —— 间距 / 字号 / 圆角 / 画布的**取值**尚未收敛
-   （颜色层已由 pass 1 收敛完）。**pass 2 已完成（2026-09-14）：admin 与 index 均已收敛，三个页面的间距/字号/圆角全部走令牌。****前置两步已完成并提交**：取值棘轮守卫
+> 本节保留原始编号（其它文档按内容引用它）。**未标 ✅ / 🚫 的才是真待办。**
+
+1. ✅ **模块 11 pass 2（取值收敛）—— 已完成（2026-09-14）**：admin（试金石）→ index
+   两页的间距 / 字号 / 圆角全部走令牌，取值表在 `docs/design-tokens.md` §1.3 / §1.4。
+   **以下为当时的计划原文，已全部执行完，留档勿再照做。****前置两步已完成并提交**：取值棘轮守卫
    （`LENGTH_TOKEN_PAGES`，含防"空转"的自测）、index / admin 的尺度令牌定义
    （`3983f25` / `8142d14`，只加定义不改引用）。
    深色强调色**已按目视评审改回亮蓝** `#4c8dff`；浅色主题**已定** `#2563eb`
    （亮蓝 family 里最浅的正文达标档，见 design-tokens §3.1 / §3.1.1）。
 
-   ### login 页取值收敛计划（新会话直接照做）
+   ### （留档，勿再照做）login 页取值收敛计划
 
    **前置**：先把 `login` 加进 `tests/test_multiuser_ui.py` 的 `LENGTH_TOKEN_PAGES`
    再跑一遍 —— **若它变红，说明 pass 1 有遗漏（正好当场修）**；
@@ -86,45 +100,35 @@
    **停下等用户目视**。用户认可后按同一套推 index（**试金石已改为 admin**）；
    若不认可，用户会指出是"间距"还是"字号"哪一类 —— **只回退那一类**即可。
 
-2. **模块 12 剩余条目**：`docs/optimization-backlog.md` 里 T2/T3/T4/T6/T7/T8、R1/R2/R5、
-   U1–U4、N1 都还没做。T3/T8 建议先补真机/集成测试再改（现有桩测试结构上覆盖不到）。
-3. **模块 13 迁移未执行**：等网络恢复后 `git ls-remote` 核实 p1 远端是否已有内容（Q1），
-   再按 Phase 0→4 走。目标根 `D:\dev-workspace\`、`deepseek-harness` 移到 `D:\tools\`。
+2. **模块 12 剩余条目**：`docs/optimization-backlog.md` 里 **T3/T4/T6/T8、R1/R5、
+   U1–U4、N1** 还没做（T2/T5/T7/R2/R3/R4 已完成，逐条证据见该文件的「落地记录」）。
+   **下一批候选：U2 → U4**（用户已点名，非必须；模块 13 取消后已无前置）。
+3. 🚫 **模块 13（工作区迁移）—— 已取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
+   风险是 `.git` 历史孤本（两个仓库**从未 push**；当时本机网络不可达，`git ls-remote`
+   核不了 Q1），而 `D:\代码项目\` 现状完全可用 —— 不值得为"好看"冒历史丢失的风险。
+   `docs/migration-plan.md` **保留作参考、不删**（它写的是"若要迁移该怎么做"，不是待办）；
+   将来真要迁，仍按它 Phase 0.4 先 `git bundle create --all`。
+4. ✅ **R2 第 2 条（错误结构）—— 已完成（2026-09-14）**：两项目统一「固定中文文案 +
+   请求 id」，异常细节只进日志（p1 从 21 字节纯文本升级为 JSON，p2 去掉 `{exc!s}` 泄露）。
+   落地 commit 与实现事实见 `docs/optimization-backlog.md`「落地记录」；测试写法
+   （`TestClient(app, raise_server_exceptions=False)`）见 `tests/test_request_id.py` 的
+   模块 docstring。
 
-4. **R2 第 2 条（错误结构）—— 交接（未开始）**
-
-   上下文到上限时停在这里，按 §5.3 不在"跑不完的跨文件步骤"上动手。以下事实都已核实，
-   下一轮不必重新探：
-
-   - **p1（`src/server.py`）目前没有**任何 `exception_handler`：未预期异常交给 Starlette
-     默认处理器 → **21 字节纯文本 500**（前端只能显示"请求失败（HTTP 500）"）。
-     新增位置：请求 id 中间件附近即可（`request_id.install()` 与 `_attach_request_id`
-     已在文件里）。
-   - **p2（`src/server.py:88-105`）已有** `@app.exception_handler(Exception)`，其
-     `content={"detail": f"服务器内部错误：{exc!s}"[:500]}` 要换成
-     `{"detail": "服务器内部错误", "request_id": request_id.of(request)}`，
-     并**显式** `headers={request_id.REQUEST_ID_HEADER: rid}` ——
-     探针结论 3：错误路径上中间件根本没机会给响应加头。`logger.exception(...)` 保留，
-     **堆栈只进日志**。
-   - **p2 既有测试** `tests/test_server.py:391-412` 的三条断言（500 / `application/json` /
-     `"detail" in body`）在新结构下**仍然成立**（保留了 `detail` 键），无需改动；
-     只需**新增两条**：哨兵异常消息**不在响应体**、**在日志里**（`caplog`）。
-   - **测试必须用** `TestClient(app, raise_server_exceptions=False)`：默认 `True` 会把异常
-     直接抛给测试代码而不是让你拿到 500 响应。这条已写进 `tests/test_request_id.py` 的
-     模块 docstring。
-   - 测试数 **+2/项目** → README 需同步到 **472 / 662**。
-   - 收尾顺序：`docs:` 标 R2 完成 → **模块 13**（先
-     `git ls-remote --heads https://github.com/Yoshino-0721/rag-knowledge-base.git`
-     核实 p1 远端是否已有内容，即 Q1）。
+   ⚠️ **上一版本节的交接文字是错的，留作错题**：它断言 p2 既有测试
+   `tests/test_server.py:391-412` 的三条断言「在新结构下仍然成立、**无需改动**」——
+   而紧挨着的**第 413 行**有一条 `assert "boom" in body["detail"]`，正是把旧泄露行为
+   钉死的断言，必须改写成 `assert "boom" not in body["detail"]`。错因不是判断失误，是
+   **按行号截断读取**（读到 412 就停了）；已沉淀为 AGENTS.md §5.4。
 
 ## 3. 关键上下文（新会话最容易踩的三类）
 
 ### 3.1 两仓库刻意同构
 
 `src/auth/{api,deps,db,security,throttle,models}.py`、`src/paths.py`、`src/upload_guard.py`、
-`src/concurrency.py` 在两个项目里**逐字相同**（可 `Get-FileHash` 比对；改一处就要同步另一处）。
-`docs/design-tokens.md`、`docs/optimization-backlog.md`、`docs/migration-plan.md`、
-`scripts/e2e_real.ps1` 也是两份同一 sha256。
+`src/concurrency.py`、`src/request_id.py` 在两个项目里**逐字相同**（可 `Get-FileHash` 比对；
+改一处就要同步另一处）。`docs/status.md`、`docs/design-tokens.md`、
+`docs/optimization-backlog.md`、`docs/migration-plan.md`、`scripts/e2e_real.ps1`
+也是两份同一 sha256（`docs/status.md` 本身就是"一份文档描述两个仓库"）。
 **但"同构的是架构与写法，不是每个端点的行为"** —— 例如"没有数据就提问"p1 返回引导语
 (200)，p2 返回 400；照抄姊妹项目的语义写检查会造出假失败。
 
@@ -180,12 +184,19 @@ powershell -ExecutionPolicy Bypass -File scripts/e2e_real.ps1 -Project p1
 管理员口令只在服务启动日志里随机生成一次（横幅）。**脚本里没有任何明文口令。**
 临时工具与保险 zip 在 `%TEMP%\dsh-scratch\`（常驻：`smoke.ps1`、`auth_check.ps1`）。
 
+**服务状态（2026-09-14 收尾）**：8000 端口那个 dev server 已按记录过的 PID 停掉
+（`Stop-Process -Id 103264,101100` —— **只按 PID，不按进程名**，见 AGENTS.md 一、通用工程规约）。
+要再起就照上面的命令；确认端口占用用 `Get-NetTCPConnection -LocalPort 8000 -State Listen`。
+
 ## 5. 建议的下一步顺序
 
-1. 拿到登录页目视反馈 → **pass 2**（一次一页：login → index → admin）。
-2. 从 `docs/optimization-backlog.md` 挑下一批：建议 T2（上传非原子覆盖）、T7（重置口令
-   也置 must_change_password）、R2（异常对外呈现两边各错一半）。
-3. 网络恢复后做模块 13 的 Q1 核实与迁移。
+1. **U2 / U4**（用户已点名的下一批，非必须）：U2 上传语义文案 —— 说清"重新上传会
+   **替换**当前数据集"，会删文件时先回显文件名；U4 注册 Tab 按 `allow_registration`
+   默认隐藏（默认配置下现在这条是必然踩到的死路）。
+2. 其余按影响面挑：R1/R5（磁盘与消息体只增不减）、T4（健康检查每次真跑 docker）、
+   T6（多 worker 假设）、U1/U3、N1。
+3. **T3 / T8 要先补真机 / 集成测试再改**（现有桩测试结构上覆盖不到，见 §3.2）。
+4. **模块 13 已取消**，不再作为待办（`docs/migration-plan.md` 只作参考）。
 
 ## 6. 新会话自检清单（接手时先跑这三步）
 
@@ -196,7 +207,7 @@ powershell -ExecutionPolicy Bypass -File scripts/e2e_real.ps1 -Project p1
    全是 `docs:` 前缀、只动了本文档，那也算一致（文档自己每改一次就会推进一次 HEAD，
    否则这份自检清单会自我失效）。其余情况一律先读新 commit，别按旧状态动手。
 2. **对环境**：在各自仓库根目录跑一次全量测试（命令见 §4）—— 数字应当与 §0 一致
-   （p1 460 / p2 651）。不一致说明代码或环境已经漂移，先查清楚再改，别在不确定的
+   （p1 471 / p2 661）。不一致说明代码或环境已经漂移，先查清楚再改，别在不确定的
    基线上做改动。
 3. **对约定**：**先读 `AGENTS.md`，再读本文档** —— 两份合起来才完整：
    `AGENTS.md` 说"不许做什么、为什么"（架构决策 + 硬约束 + 踩过的坑），
