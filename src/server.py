@@ -91,7 +91,7 @@ app.include_router(admin_router)
 # ---------------------------------------------------------------- 全局异常兜底
 
 @app.exception_handler(Exception)
-def _unhandled_exception(_request, exc: Exception) -> JSONResponse:
+def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     """把任何逃过接口 try/except 的异常拍平成 JSON。
 
     复盘：用户用真实 Excel 提问时偶发一个 500，Starlette 默认会把异常吞成
@@ -103,10 +103,13 @@ def _unhandled_exception(_request, exc: Exception) -> JSONResponse:
     # HTTPException 已经有自己的处理器，会先一步被 FastAPI 路由走；
     # 但 RequestValidationError（pydantic 校验失败）等不会走 HTTPException，
     # 它们默认也被这个兜底接住 —— 一并拍平。
-    logger.exception("未捕获异常：%s", exc)
+    rid = request_id.of(request)
+    logger.exception("未捕获异常（request_id=%s）：%s", rid, exc)
     return JSONResponse(
         status_code=500,
-        content={"detail": f"服务器内部错误：{exc!s}"[:500]},
+        content={"detail": "服务器内部错误，请稍后重试", "request_id": rid},
+        # 显式加：异常路径上中间件根本没机会给响应加头（探针结论 3）
+        headers={request_id.REQUEST_ID_HEADER: rid},
     )
 
 

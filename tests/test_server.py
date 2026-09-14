@@ -11,6 +11,8 @@ alice 并自动带 token 的客户端包装」，用例里不必到处写 auth �
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -410,9 +412,41 @@ class TestUncaughtExceptionHandler:
         assert resp.headers["content-type"].startswith("application/json")
         body = resp.json()
         assert "detail" in body, f"响应里没有 detail 字段：{body}"
-        assert "boom" in body["detail"], f"没把异常信息透出去：{body}"
+        # ⚠️ 语义在 R2 里**反转**了：R2 之前后端把 f"服务器内部错误：{exc!s}" 透给客户端，
+        # 所以这里断言"异常信息要透出去"；R2 之后改为对外屏蔽（细节只进日志，响应里只留
+        # 固定文案 + request_id），于是断言反过来 —— 看到 not in 别觉得莫名其妙。
+        assert "boom" not in body["detail"], f"异常细节泄露到响应里了：{body}"
+        assert "request_id" in body, body
 
     def test_validation_error_is_also_json(self, loaded_client):
         """pydantic 校验失败也要走 JSON，否则前端拿到的错误信息是 fragment HTML。"""
         resp = loaded_client.post("/api/ask", json={"question": ""})  # min_length=1
         assert resp.headers["content-type"].startswith("application/json")
+
+
+    def test_details_go_to_logs_while_response_stays_clean(self, loaded_client, monkeypatch, caplog):
+        """对外屏蔽、对内保留：哨兵异常消息不在响应里，但在日志里。
+
+        只守"屏蔽"会逼出"把日志也删掉"的错误修法；只守"保留"等于没屏蔽。
+        """
+        sentinel = "SECRET-INTERNAL-URL"
+
+        def boom(*args, **kwargs):
+            raise ValueError(sentinel)
+
+        class _FakeExecutor:
+            def available(self):
+                return True, ""
+
+        monkeypatch.setattr(server_module, "get_executor", lambda: _FakeExecutor())
+        monkeypatch.setattr(server_module, "get_client", lambda: object())
+        monkeypatch.setattr("src.server.run_agent", boom)
+
+        with caplog.at_level(logging.ERROR, logger="src.server"):
+            resp = loaded_client.post("/api/ask", json={"question": "随便问"})
+
+        assert resp.status_code == 500
+        assert sentinel not in resp.text
+        assert any(sentinel in record.getMessage() for record in caplog.records), [
+            r.getMessage() for r in caplog.records
+        ]
