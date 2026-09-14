@@ -562,3 +562,61 @@ def test_dark_pages_share_the_same_accent_surface_text_tokens():
         "深色页面（login vs admin）的令牌不一致："
         + "；".join(f"{k}: {v[0]} != {v[1]}" for k, v in mismatched.items())
     )
+
+
+# ---------------------------------------------------------------- 取值收敛（pass 2）
+
+# 已收敛"取值"的页面：逐页加锁（pass 2 顺序 login -> index -> admin）。
+# 空元组是**刻意的起点** —— 机制先落地，页面做完一页加一页。
+LENGTH_TOKEN_PAGES = ()
+
+# 只看这几类属性：间距 / 字号 / 圆角。其余（宽度、定位、阴影、行高…）不在本轮范围。
+LENGTH_PROPS = ("padding", "margin", "gap", "border-radius", "font-size")
+_RAW_PX = re.compile(r"(?<![\w.-])(\d+(?:\.\d+)?)px")
+# 放行的裸值：0 = 本来就没有间距；1px = 发丝线（分隔线 / 内联 code 的竖向微调）
+_ALLOWED_PX = {"0", "1"}
+
+
+def _raw_lengths(css: str) -> list:
+    """返回"没走令牌的 px 长度"（只看 LENGTH_PROPS 里的属性）。"""
+    findings = []
+    for prop, value in re.findall(r"([a-z-]+)\s*:\s*([^;{}]+);", css):
+        if prop not in LENGTH_PROPS and not prop.startswith(("padding-", "margin-")):
+            if not prop.endswith("-gap"):
+                continue
+        if "var(" in value:
+            continue
+        for number in _RAW_PX.findall(value):
+            if number not in _ALLOWED_PX:
+                findings.append(f"{prop}: {' '.join(value.split())}")
+                break
+    return findings
+
+
+def test_length_guard_detects_raw_values():
+    """守卫自身的自测：否则页面白名单空着时它会静默空转。"""
+    sample = (
+        ".x{padding:9px 11px;margin:0;gap:var(--space-2);"
+        "border-radius:50%;font-size:13.5px;padding-top:var(--space-3)}"
+    )
+    found = _raw_lengths(sample)
+    assert len(found) == 2, f"应当只命中 padding 与 font-size，实际：{found}"
+    assert any(item.startswith("padding:") for item in found), found
+    assert any(item.startswith("font-size:") for item in found), found
+
+
+def test_converged_pages_use_only_token_lengths():
+    """已收敛页面里，间距 / 字号 / 圆角不得再出现裸 px。
+
+    与颜色那条棘轮同理：pass 2 把取值收敛成令牌之后，新写的样式一旦又手写
+    `padding: 9px 11px`，就再也回不到"一处改、全站变"的状态。
+    """
+    for name in LENGTH_TOKEN_PAGES:
+        css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", read_page(name), re.S))
+        root = re.search(r":root\s*\{(.*?)\}", css, re.S)
+        assert root, f"{name} 页面没有 :root 令牌块"
+
+        findings = _raw_lengths(css.replace(root.group(0), ""))
+        assert not findings, (
+            f"{name} 页面还有 {len(findings)} 处没走令牌的长度：{findings[:6]}"
+        )
