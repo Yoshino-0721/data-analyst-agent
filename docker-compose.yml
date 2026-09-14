@@ -1,0 +1,75 @@
+# 项目二的生产部署（Linux 服务器）
+#
+# 这个文件的核心目的是**把三个安全默认值固化下来，而不是靠人记住**：
+#
+#   APP_ENV=production          非 dev：强制外部注入 JWT_SECRET，且 local 执行器拒绝构造
+#   EXECUTOR=docker             唯一的真实隔离实现（local 无 OS 级隔离，见 README 显著位置）
+#   JWT_SECRET=${JWT_SECRET:?…} 没注入就**直接启动失败**，而不是偷偷随机生成一份
+#
+# 为什么要把它们写在 compose 的 environment 里、而不是只依赖 .env：
+#   `environment` 的优先级**高于** `env_file`，所以哪怕 .env 里写着
+#   `APP_ENV=dev` / `EXECUTOR=local`（那是本机开发用的），容器里也压不住这三项。
+#   这就消除了"仓库 .env 为了本机开发设成 local，结果服务器上照抄跑了 local"这条路径。
+
+services:
+  app:
+    build: .
+    image: data-analyst-agent:latest
+    container_name: data-analyst-agent
+    ports:
+      # 宿主 8123 → 容器 8000（与本项目 README 里本机开发端口一致，便于对照）
+      - "8123:8000"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      EXECUTOR: docker
+      # `:?` 是 compose 的必填语法：变量为空时**直接报这条消息并中止**，
+      # 不会带着空密钥把服务拉起来。
+      JWT_SECRET: ${JWT_SECRET:?生产部署必须显式注入 JWT_SECRET；先 cp .env.example .env 并填入 python -c "import secrets; print(secrets.token_urlsafe(48))" 的输出}
+      STORAGE_DIR: ${APP_STORAGE_PATH:?必须在 .env 里指定 APP_STORAGE_PATH（宿主机存储目录的绝对路径）}
+      # 初始口令留空即走"随机强口令 + 强制首次登录改密"；填了则会做强度校验，
+      # 弱口令（含 admin123）会让服务拒绝启动。
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      # ① 存储目录：**宿主路径与容器路径必须逐字相同**。
+      #    DockerExecutor 传给 docker 的挂载参数是宿主路径，而应用在容器里看到的
+      #    是容器路径。两边不一致时，宿主 daemon 会挂一个**空目录**进沙箱 ——
+      #    模型看到空 /data，报一个和真实原因完全无关的错（且不会有人想到是路径映射）。
+      #    这也是本套 compose 只适用于 Linux 的原因：Windows 上容器内不可能出现
+      #    `D:\...` 盘符路径。
+      - ${APP_STORAGE_PATH}:${APP_STORAGE_PATH}
+      # ② Docker socket：应用要创建**兄弟容器**（沙箱）就必须能访问宿主 daemon。
+      #    ⚠️ 代价必须讲清楚：拿到 socket 等于拿到宿主 root —— 这个容器一旦被攻破，
+      #    宿主就被完全接管（容器里的进程可以 `docker run --privileged -v /:/host`
+      #    自我提权）。所以"容器内降权到非 root"在这里是**假安全**，Dockerfile 里
+      #    刻意没做。
+      #    如果不能接受这个前提，正确做法是**不要把应用放进容器**：在宿主上用
+      #    venv + systemd 跑（一样 EXECUTOR=docker，但不挂 socket），
+      #    只把沙箱交给 Docker。
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 部署前置条件（compose 不会替你准备，缺一个就会在运行时以某种间接方式失败）
+#
+#   1. **宿主上先构建沙箱镜像**（应用容器通过宿主 daemon 使用它）：
+#        docker build -t data-analyst-sandbox:latest src/sandbox/image
+#      没构建的话，提问时会返回 SANDBOX_ERROR（镜像缺失）—— 这条错误不会回填给模型。
+#
+#   2. `.env` 里必须有 `JWT_SECRET` 与 `APP_STORAGE_PATH`；两者缺失都会被 compose
+#      直接拦下并打印上面那段说明。
+#
+#   3. 宿主存储目录要存在且可写：
+#        mkdir -p "$APP_STORAGE_PATH"
+#      应用容器以 root 运行（见 Dockerfile 的说明），所以通常不需要额外 chown；
+#      但如果你改成了非 root，就要把属主对齐到那个 uid。
+#
+#   4. 首次启动请从日志里取管理员口令（未设 ADMIN_PASSWORD 时）：
+#        docker compose logs app | grep 口令
+#      该账号在改密前除 /api/auth/me 与改密接口外一律 403。
+#
+# ⚠️ 诚实声明：本文件与同目录 Dockerfile **未在开发机上做过运行时验证**
+#    （本机刻意不启用 Docker Desktop / 虚拟化，项目当前用 EXECUTOR=local）。
+#    首次上服务器请按上面 1-4 逐步验证，并确认一次真实提问能出图（证明路径映射正确）。
+# ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,32 @@
+# 构建镜像时排除的东西：镜像里只需要 src/ 与 web/ 加上 pyproject.toml
+.git
+.gitignore
+
+# 本机环境与虚拟环境
+.env
+.env.example
+.venv
+venv
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行期数据：**不进镜像**。
+# 应用数据在宿主上通过 APP_STORAGE_PATH 以相同绝对路径挂进来（见 docker-compose.yml），
+# 打进镜像反而会掩盖"路径映射配错了"这类问题。
+storage/
+data/
+tmp/
+runs/
+
+# 文档与截图（镜像里用不到，减小体积）
+docs/
+*.md
+!.dockerignore
+Dockerfile
+docker-compose.yml
