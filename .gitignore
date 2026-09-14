@@ -26,3 +26,8 @@ Thumbs.db
 
 # 工作区记忆目录（不属于本仓库）
 .workbuddy/
+
+# 多用户运行期产物（storage/ 已整体忽略，这里显式列名提高可读性）
+storage/app.db
+storage/secret.key
+storage/session/users/

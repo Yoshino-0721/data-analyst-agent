@@ -2,10 +2,11 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-338%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-523%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
+多用户共用一套服务：**每个人的数据集、产物、会话记录互相看不见**。
 
 **核心在后端工程：执行隔离、异常分类、成本控制。** 不是一个 UI 套壳。
 
@@ -34,9 +35,15 @@
 自己跑一遍：
 
 ```bash
-export ZHIPUAI_API_KEY=你的Key
-python -m uvicorn src.server:app --port 8000
-# 打开 http://127.0.0.1:8000 ，拖一份 CSV / Excel 进去
+# 1. 装依赖（pandas / openpyxl / fastapi / uvicorn / sqlalchemy / bcrypt / pyjwt 等）
+pip install -e .
+
+# 2. 启动服务（本机示例用 8123，避免和其它本地服务撞端口）
+python -m uvicorn src.server:app --port 8123
+
+# 3. 打开 http://127.0.0.1:8123 → 跳到登录页
+#    默认管理员 admin / admin123（首次启动自动引导，登录后请立刻改密）
+#    其它成员在登录页切到「注册」自己开账号
 
 # 或者不起服务，直接命令行端到端跑一次：
 python scripts/demo_agent.py
@@ -57,7 +64,79 @@ python scripts/demo_agent.py
 | 真实容器集成测试（`-m docker`） | ✅ 17 项 | `tests/test_docker_integration.py` |
 | Schema 提取与成本控制 | ✅ | `src/schema/extractor.py` |
 | 手写 Function Calling 循环 | ✅ | `src/agent/` |
-| 前端（对话区 + 执行轨迹） | ✅ | `web/index.html` |
+| 用户系统（bcrypt + JWT + SQLite） | ✅ | `src/auth/` |
+| 多用户工作区隔离 | ✅ | `src/workspaces.py` |
+| 会话 / 消息 / 执行轨迹持久化 | ✅ | `src/serializers.py`、`src/auth/models.py` |
+| 管理员后台（API + 页面） | ✅ | `src/admin_api.py`、`web/admin.html` |
+| 前端（登录 / 工作台 / 轨迹区） | ✅ | `web/login.html`、`web/index.html` |
+
+## 多用户与权限
+
+### 角色与权限矩阵
+
+| 能力 | 普通用户 `user` | 管理员 `admin` |
+|---|---|---|
+| 上传数据集 / 提问 / 出图 | ✅ 仅限自己的数据 | ✅ 仅限自己的数据 |
+| 会话与执行轨迹 | ✅ 仅限自己的 | ✅ 自己的 + **可查看任意用户的完整轨迹** |
+| 数据集列表与删除 | ✅ 仅限自己的 | ✅ 全站数据集 |
+| 产物 `/api/artifact/*` | ✅ 仅限自己工作区内的产物 | ✅ 同左（管理员也不能跨用户取产物文件） |
+| `/api/admin/*` | ❌ 403 | ✅ |
+| 系统操作（清缓存 / 健康状态） | ❌ 403 | ✅ |
+
+两条刻意的设计：
+
+- **越权返回 404 而不是 403**。「这个资源不属于你」和「这个资源不存在」必须长得一样，
+  否则攻击者能靠状态码枚举出别人的会话 id 与数据集 id。
+- **管理员只读历史，不获得执行入口**。后台能看任意用户的提问与完整执行轨迹，
+  但**没有任何「以某用户身份跑一段代码」的入口** —— 管理能力不该顺带变成执行能力。
+- **权限闸门只在服务端**。前端隐藏入口只是别让人误点，`require_admin` 才是真闸门。
+
+### 默认管理员
+
+全新部署（`users` 表为空）时，服务启动会自动引导一个管理员：
+
+```
+用户名  admin
+口令    admin123
+邮箱    admin@example.com
+```
+
+⚠️ **使用默认口令时启动日志会打出警告，请登录后立刻在界面上改密。**
+也可以用环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL` 指定初始账号。
+引导是幂等的：表里已有用户就不会重复创建。
+
+### 认证方式
+
+除 `GET /api/health` 与三个页面（`/`、`/login`、`/admin`）外，**所有接口都需要登录态**：
+
+```
+Authorization: Bearer <token>
+```
+
+token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`），
+由 `/api/auth/login` 或 `/api/auth/register` 下发，前端存在 `localStorage.auth_token`。
+失效或被禁用时返回 401 / 403，前端自动清 token 并跳回登录页。
+
+### 数据隔离是怎么做到的
+
+| 面 | 做法 |
+|---|---|
+| 数据集文件 | 每个用户一个工作区目录 `storage/session/users/<uid>/data/`，文件名一律 `safe_target_name()` 归一化 |
+| 产物 | 每用户独立 `artifacts/`，`Session.artifact_path()` 归一化 + 校验落点，穿越一律返回 None |
+| 内存状态 | `src/workspaces.py` 维护「一用户一 `Session` 实例」的注册表，互不共享 |
+| 数据库 | `datasets` / `sessions` / `messages` 全部带 `user_id` / 归属校验，越权 404 |
+| 沙箱挂载 | 每次**只挂本次实际用到的文件**（`data_files`），绝不挂整个上传目录 |
+
+> ⚠️ **必须诚实说明的一点**：数据隔离是**应用层**做的，不是操作系统层。
+> 尤其在本机用 `EXECUTOR=local` 调试时，模型生成的代码以当前用户权限运行、**可读整个磁盘**
+> （见 `AGENTS.md` §2.5 与 `docs/sandbox-threat-model.md`）。也就是说 `local` 模式下
+> **隔离只能防"用错数据"，防不住"故意越权读别人的文件"**。要拿到真正的隔离边界，
+> 必须用默认的 Docker 执行器：`--read-only` + `--network=none` + 最小只读挂载。
+> **生产环境不要用 `local`。**
+
+> 另一条已知限制：多用户改造沿用既有的手写 FC 循环签名，**每轮提问只把当前问题交给模型**，
+> 不注入同一会话里此前的问答。所以「会话」目前承担的是**归组与留痕**（以及管理员审计），
+> 不是跨轮上下文记忆 —— 追问需要把条件说全。把历史接进循环列入后续规划。
 
 ## 为什么错误分类是这个项目的地基
 
@@ -82,6 +161,10 @@ python scripts/demo_agent.py
 | `REJECTED` | 静态预检拦下，**没起容器** | 明确告知哪种写法不行 |
 | `SANDBOX_ERROR` | 镜像缺失 / daemon 不可达 | 不回填给模型（它改不了） |
 
+**执行轨迹会随消息落库**：每一轮的代码、状态、stdout/stderr、hint 与产物文件名
+都存在 assistant 消息的 `meta` 里，所以刷新页面、换设备、甚至管理员事后审计，
+都能把当时的完整过程重新渲染出来 —— 而不是只留一句结论。
+
 ## 隔离做了什么
 
 六件事叠起来，缺一个防护面就破：
@@ -102,8 +185,11 @@ python scripts/demo_agent.py
 ## 快速验证
 
 ```bash
-# 运行测试（140 项，全部用桩对象，不需要 Docker）
+# 运行测试（523 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
+
+# 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
+pytest -m docker
 
 # 端到端闭环演示：写错 → 结构化反馈 → 改好
 python scripts/demo_loop.py
@@ -123,12 +209,82 @@ python scripts/check_docker.py --build   # 顺手构建沙箱镜像
 2. 低效实现 → `TIMEOUT`，但 stdout 仍捞回了被杀前打印的内容
 3. 修正后 → `OK` + 产物 `summary.txt`
 
+## 配置项
+
+全部通过环境变量或仓库根 `.env` 覆盖（`.env` 不入库）。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `ZHIPUAI_API_KEY` | 无 | 必填，智谱 API Key |
+| `ZHIPU_BASE_URL` | 智谱 v4 地址 | OpenAI 兼容接口地址 |
+| `CHAT_MODEL` | `glm-5.2` | 对话模型 |
+| `PROXY_URL` | 空 | 需要走代理时设置（httpx 会读它） |
+| `AGENT_MAX_STEPS` | `8` | 工具调用轮数上限，用尽后摘掉 tools 强制收尾 |
+| `MAX_REPEAT_FAILURES` | `3` | 连续多少次同一处错误就强制收尾 |
+| `HISTORY_MAX_CHARS` | `12000` | 循环内历史消息的字符预算 |
+| `HISTORY_KEEP_TURNS` | `4` | 无论如何完整保留的最后 N 轮 |
+| `EXECUTOR` | `docker` | `docker`（默认，有隔离）或 `local`（**仅本机调试，无隔离**） |
+| `APP_ENV` | `dev` | 非 dev 环境下 `local` 执行器拒绝构造 |
+| `JWT_SECRET` | 自动生成 | JWT 签名密钥。不设则随机生成并持久化到 `storage/secret.key`；**多实例部署必须显式设置且保持一致** |
+| `JWT_EXPIRE_HOURS` | `168` | 登录态有效期（小时），默认 7 天 |
+| `ADMIN_USERNAME` | `admin` | 首次启动引导的管理员用户名 |
+| `ADMIN_EMAIL` | `admin@example.com` | 首次启动引导的管理员邮箱 |
+| `ADMIN_PASSWORD` | `admin123` | 首次启动引导的管理员口令；用默认值时启动日志会警告 |
+| `STORAGE_DIR` | `<仓库>/storage` | 落盘根目录（SQLite、各用户工作区、`secret.key`） |
+| `AUTH_DB_PATH` | `<STORAGE_DIR>/app.db` | 用户库路径，特殊部署可单独指定 |
+
+## 接口
+
+除 `GET /api/health` 与页面外，全部需要 `Authorization: Bearer <token>`。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 工作台页面（无 token 时前端跳登录页） |
+| GET | `/login` | 登录 / 注册页面 |
+| GET | `/admin` | 管理后台页面（普通用户前端提示无权限，服务端接口才是真闸门） |
+| GET | `/api/health` | 健康检查（**公开**，只返回全局状态：是否配了 Key、模型、执行器可用性） |
+| POST | `/api/auth/register` | 注册，body `{"username","email","password"}`；注册即登录，返回 `{"token","user"}` |
+| POST | `/api/auth/login` | 登录，body `{"account","password"}`；`account` 可填用户名或邮箱 |
+| GET | `/api/auth/me` | 当前登录用户 |
+| POST | `/api/auth/change-password` | 改密，body `{"old_password","new_password"}` |
+| GET | `/api/workspace` | 当前用户工作区状态（已加载的数据文件与 Schema 摘要、运行目录） |
+| POST | `/api/upload` | 上传数据（multipart，字段名 `files`），**替换**当前用户的数据集 |
+| POST | `/api/ask` | 提问，body `{"question": "...", "session_id": 可选}`；返回答案、产物与**完整执行轨迹** |
+| GET | `/api/artifact/{name}` | 取产物文件（限本人工作区，穿越由 `artifact_path` 拦） |
+| POST | `/api/reset` | 清空当前用户的数据集 |
+| GET | `/api/datasets` | 当前用户的数据集列表 |
+| DELETE | `/api/datasets/{id}` | 删除数据集（删文件 → 删表行；文件删不掉时改名挪开） |
+| GET | `/api/sessions` | 会话列表 |
+| POST | `/api/sessions` | 新建会话，body `{"title": "可选"}` |
+| GET | `/api/sessions/{id}/messages` | 某会话的全部消息（assistant 的 `meta` 里含执行轨迹与产物） |
+| PATCH | `/api/sessions/{id}` | 重命名会话 |
+| DELETE | `/api/sessions/{id}` | 删除会话（消息级联删除） |
+
+管理员接口（前缀 `/api/admin`，全部需要 `admin` 角色）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/users` | 用户列表 / 搜索（`?q=` 匹配用户名或邮箱） |
+| PATCH | `/users/{id}` | 改角色 / 启禁用（不能降级或禁用自己的账号） |
+| POST | `/users/{id}/reset-password` | 重置口令；不传 `password` 则生成随机口令，只在响应里出现一次 |
+| GET | `/sessions` | 全站会话列表（`?user_id=` 过滤） |
+| GET | `/sessions/{id}/messages` | 查看任意用户的完整记录，**含执行轨迹**（原样带出 `meta`） |
+| DELETE | `/sessions/{id}` | 删除任意会话 |
+| GET | `/datasets` | 全站数据集列表（`?user_id=` 过滤） |
+| DELETE | `/datasets/{id}` | 删除任意数据集（删文件 + 删表行 + 摘掉该用户的内存工作区） |
+| POST | `/system/reset-caches` | 清掉缓存的执行器与模型客户端 |
+| GET | `/system/health` | 系统状态（不含 Key 明文） |
+| GET | `/stats` | 用户 / 会话 / 消息 / 数据集计数与近 24h 活跃 |
+
 ## 明确不做的事
 
 诚实划界，避免把「没做」说成「做了」：
 
 - **不防内核 0day 逃逸**：容器共享宿主内核。要防这类威胁得上 gVisor /
   Kata / 独立虚机，本项目定位是挡住模型写出的常规危险代码。
-- **不做多租户隔离**：单用户本地 / 自部署工具。
+- **`local` 执行器没有 OS 级隔离**：它只是本机调试工具，模型代码以当前用户权限运行、
+  可读全盘、可出网。上面的「数据隔离」在 `local` 模式下只防误用，不防恶意越权 ——
+  要真隔离就必须用默认的 Docker 执行器。非 dev 环境下 `local` 会拒绝构造。
 - **不预算 fork 炸弹之外的攻击**：不防时序 / 缓存侧信道。
-- **不引入 LangGraph**：手写 Function Calling 循环，理由见 `AGENTS.md`。
+- **不做会话级上下文记忆**（当前）：会话用于归组与审计，历史不注入模型。
+- **不引入 LangGraph / LangChain**：手写 Function Calling 循环，理由见 `AGENTS.md`。
