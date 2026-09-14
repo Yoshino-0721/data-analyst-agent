@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-596%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-616%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -96,6 +96,20 @@ python scripts/demo_agent.py
 | 产物 `/api/artifact/*` | ✅ 仅限自己工作区内的产物 | ✅ 同左（管理员也不能跨用户取产物文件） |
 | `/api/admin/*` | ❌ 403 | ✅ |
 | 系统操作（清缓存 / 健康状态） | ❌ 403 | ✅ |
+
+> ### 管理员能看到什么（请让所有成员在上传前知情）
+>
+> **管理员可查看所有用户的会话、消息、引用片段及上传文档的元数据。**
+> （本项目对应的是**数据集**：文件名、行数、列数。）
+>
+> 具体到这套实现：管理后台能读取**任意用户**的完整聊天记录，包括每条 assistant
+> 消息 `meta` 里的**完整执行轨迹**（模型写过的每一段代码、stdout/stderr、产物文件名）。
+> 本项目**刻意不提供数据集内容预览** —— CSV/Excel 的"预览"等于把整份业务数据交给
+> 管理员，没有对应场景，所以那个端点根本不存在。
+>
+> 换句话说，**不要把自己不希望管理员看到的内容放进这套系统**。
+> 这不是实现缺陷，而是"全站管理员"这个角色的定义 —— 写在这里是为了让成员在
+> **上传之前**就知道，而不是事后才发现。
 
 两条刻意的设计：
 
@@ -207,7 +221,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（596 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（616 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）

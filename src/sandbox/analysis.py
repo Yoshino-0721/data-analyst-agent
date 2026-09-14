@@ -16,6 +16,12 @@ from __future__ import annotations
 
 import re
 
+# `safe_target_name` 的实现搬到了 `src/paths.py`（与项目一逐字同构、全仓唯一实现），
+# 这里**再导出**以保持既有导入路径不变：执行层、schema 层与全部沙箱测试仍然
+# `from ..sandbox.analysis import safe_target_name`，行为一字未改。
+# 之所以不再留一份拷贝：两份归一化规则迟早分叉，而分叉的后果是
+# "一边拦得住、一边拦不住" —— 最难发现的一类漏洞。
+from ..paths import safe_target_name  # noqa: F401  (re-export)
 from .executor import ExecStatus, ExecutionResult
 
 # ---------------------------------------------------------------- 输出截断
@@ -303,22 +309,8 @@ def precheck_code(
 # ---------------------------------------------------------------- 文件名归一化
 
 
-def safe_target_name(source: Path) -> str:
-    """把源文件名归一化成一个可安全放进挂载目录的纯文件名。
-
-    这条是**数据挂载最小权限**的落地关键之一：被分析的文件名可能来自用户
-    上传，形如 `../../etc/passwd`。如果直接拼接，`..` 会让这个「副本」落到
-    挂载目录之外，等于白做了隔离。取 basename 之后，无论传进来什么路径，
-    落点都只会在 data/ 目录内部。
-
-    冲突时加短后缀避免相互覆盖（同名文件可能来自不同子目录）。
-    """
-    name = source.name.strip()
-    if not name or name in {".", ".."}:
-        name = "data"
-    # 再兜一层：即便 basename 里还带着分隔符也要清掉
-    name = name.replace("/", "_").replace("\\", "_")
-    return name or "data"
+# `safe_target_name` 从 `src/paths.py` 再导出（见文件顶部的导入）。
+# 这里保留一段说明而不是空着，免得下一个人以为它被误删了。
 
 
 def unique_path(directory: Path, name: str) -> Path:
