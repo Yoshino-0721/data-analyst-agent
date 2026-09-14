@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-565%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-578%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -207,7 +207,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（565 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（578 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
@@ -390,6 +390,7 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| POST | `/users` | **管理员建号**：body `{username, email, role?}`；口令由服务端生成、**只在响应里返回一次**（库里只存哈希），该账号首次登录必须先改密 |
 | GET | `/users` | 用户列表 / 搜索（`?q=` 匹配用户名或邮箱） |
 | PATCH | `/users/{id}` | 改角色 / 启禁用（不能降级或禁用自己的账号） |
 | POST | `/users/{id}/reset-password` | 重置口令；不传 `password` 则生成随机口令，只在响应里出现一次 |

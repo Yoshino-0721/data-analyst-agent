@@ -62,17 +62,31 @@ def user_payload(user: User) -> dict:
     }
 
 
-def _register_validations(payload: RegisterRequest) -> None:
-    if not _USERNAME_RE.fullmatch(payload.username):
+def validate_username(username: str) -> None:
+    """用户名规则。
+
+    **公开函数**：管理端建号（``admin_api``）与自助注册必须用同一套判定 ——
+    各写一份的话，迟早出现"注册拦得住、管理员建号拦不住"这种规则漂移。
+    """
+    if not _USERNAME_RE.fullmatch(username):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="用户名需为 2-32 位中文、字母、数字或下划线",
         )
-    if not _EMAIL_RE.fullmatch(payload.email):
+
+
+def validate_email(email: str) -> None:
+    """邮箱格式规则，理由同 :func:`validate_username`。"""
+    if not _EMAIL_RE.fullmatch(email):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="邮箱格式不正确",
         )
+
+
+def _register_validations(payload: RegisterRequest) -> None:
+    validate_username(payload.username)
+    validate_email(payload.email)
 
 
 @router.post("/register")

@@ -23,9 +23,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as OrmSession
 
+from .auth.api import validate_email, validate_username
 from .auth.deps import get_db, require_admin
 from .auth.models import ChatSession, Dataset, Message, User
-from .auth.security import hash_password
+from .auth.security import generate_strong_password, hash_password
 from .config import settings
 from .datasets import dataset_payload, delete_dataset
 from .serializers import message_payload, session_payload
@@ -35,6 +36,14 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(re
 
 
 # ---------------------------------------------------------------- 数据模型
+
+
+class UserCreate(BaseModel):
+    """管理员建号的入参。**口令不在这里** —— 由服务端生成、只在响应里返回一次。"""
+
+    username: str = Field(min_length=1, max_length=32)
+    email: str = Field(min_length=3, max_length=255)
+    role: str = Field(default="user", pattern="^(user|admin)$")
 
 
 class UserUpdate(BaseModel):
@@ -58,6 +67,48 @@ def _user_row(user: User) -> dict:
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
+
+
+@router.post("/users")
+def create_user(payload: UserCreate, db: OrmSession = Depends(get_db)) -> dict:
+    """管理员建号：口令由服务端生成、**只在这次响应里返回一次**，并强制首登改密。
+
+    与自助注册的分工：自助注册默认关闭（``ALLOW_REGISTRATION``），所以"谁能有账号"
+    这件事从"任何人自助"变成了"管理员开"。两条安全承诺因此落在这条端点上：
+
+    1. 口令**不落库明文**（库里只有 bcrypt 哈希），所以任何读接口都拿不回它 ——
+       真丢了就用「重置密码」重新生成一个；
+    2. 新账号带 ``must_change_password=True``：在本人把口令换掉之前，除
+       ``/api/auth/me`` 与改密接口外一律 403（一次性口令不该被长期使用）。
+
+    用户名/邮箱规则复用 ``auth.api`` 的公开校验函数，避免与注册两套规则漂移。
+    """
+    validate_username(payload.username)
+    validate_email(payload.email)
+
+    existing = db.scalar(
+        select(User).where(
+            or_(User.username == payload.username, User.email == payload.email.lower())
+        )
+    )
+    if existing is not None:
+        taken = "用户名" if existing.username == payload.username else "邮箱"
+        raise HTTPException(status_code=400, detail=f"{taken}已被占用")
+
+    password = generate_strong_password()
+    user = User(
+        username=payload.username,
+        email=payload.email.lower(),
+        password_hash=hash_password(password),
+        role=payload.role,
+        must_change_password=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # ⚠️ 明文口令只出现在这里，且只出现这一次：不写日志、不入库、之后不再返回。
+    return {"user": _user_row(user), "password": password}
 
 
 @router.get("/users")
