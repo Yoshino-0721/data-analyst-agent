@@ -2,13 +2,27 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-523%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-554%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
 多用户共用一套服务：**每个人的数据集、产物、会话记录互相看不见**。
 
 **核心在后端工程：执行隔离、异常分类、成本控制。** 不是一个 UI 套壳。
+
+## ⚠️ 部署前必读（安全）
+
+**本地执行器无 OS 级隔离，仅限本地自用或可信团队使用；生产环境必须配置 EXECUTOR=docker。**
+
+原因很直接：`LocalSubprocessExecutor` 只是本机调试工具，模型生成的代码**以当前用户权限
+运行**（可读全盘、可出网）；`AGENTS.md` §2.3 也明确它是「仅本地调试、生产禁用」的备选实现。
+本机 `.env` 里为了开发体验设了 `EXECUTOR=local`，但**代码里的默认实现始终是
+`DockerExecutor`** —— 别把 `.env` 的临时选择当成架构默认值。
+
+要拿到真正的隔离边界（`--read-only`、`--network=none`、最小只读挂载、CPU/内存/PID 限额），
+生产部署必须用默认的 `EXECUTOR=docker`。另外 `APP_ENV != dev` 时 `local` 执行器会**拒绝构造**，
+服务同时强制要求外部注入 `JWT_SECRET`（缺了拒绝启动）。隔离设计与威胁模型见
+`docs/sandbox-threat-model.md` 与 `docs/executor-interface.md`。
 
 ## 效果演示
 
@@ -193,7 +207,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（523 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（554 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
@@ -287,6 +301,8 @@ python scripts/check_docker.py --build   # 顺手构建沙箱镜像
 ## 明确不做的事
 
 诚实划界，避免把「没做」说成「做了」：
+
+> **本地执行器无 OS 级隔离，仅限本地自用或可信团队使用；生产环境必须配置 EXECUTOR=docker。**
 
 - **不防内核 0day 逃逸**：容器共享宿主内核。要防这类威胁得上 gVisor /
   Kata / 独立虚机，本项目定位是挡住模型写出的常规危险代码。
