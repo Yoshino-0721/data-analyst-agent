@@ -17,6 +17,7 @@ ServerErrorMiddleware 在 DEBUG=False 时会返 21 字节纯文本 "Internal Ser
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ from pydantic import BaseModel, Field
 
 from .agent.loop import AgentResult, run_agent
 from .agent.tools import ToolRuntime
+from .auth.api import router as auth_router
+from .auth.db import init_db
 from .config import Settings
 from .llm.client import ZhipuClient
 from .sandbox.factory import build_executor
@@ -39,7 +42,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = PROJECT_ROOT / "web"
 STORAGE_ROOT = PROJECT_ROOT / "storage" / "session"
 
-app = FastAPI(title="私人数据分析师 Agent", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # 建库 + 默认管理员引导（幂等）。测试不跑 lifespan，由 fixture 自行初始化。
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="私人数据分析师 Agent",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
+app.include_router(auth_router)
 
 
 # ---------------------------------------------------------------- 全局异常兜底

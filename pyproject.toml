@@ -9,6 +9,16 @@ dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",
     "xlrd>=2.0",
+    # 以下都是代码里**早就 import 了、但一直没声明**的隐性依赖：此前靠开发机上
+    # 恰好装过才跑得起来，换台机器 clone 下来就装不全。既然要声明就一次说清，
+    # 免得下次又漏一个。版本下限取「当前实际可用的老版本」，不锁死。
+    "fastapi>=0.110",   # src/server.py 的 Web 服务框架
+    "uvicorn>=0.27",    # 启动 ASGI 服务的入口（README 里的 uvicorn 命令）
+    "openai>=1.0",      # src/llm/client.py 里 ZhipuClient 走 OpenAI 兼容协议
+    "httpx>=0.27",      # openai SDK 的 HTTP 底座；脚本里也直接用它探接口
+    "sqlalchemy>=2.0",  # src/auth/ 的 ORM 与 SQLite 持久化
+    "bcrypt>=4.0",      # 口令哈希（直接用 bcrypt，不经 passlib）
+    "pyjwt>=2.8",       # 登录态 JWT 的签发与校验
 ]
 
 [tool.pytest.ini_options]

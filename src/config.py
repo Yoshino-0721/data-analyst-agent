@@ -79,6 +79,14 @@ class Settings:
     env: str = "dev"
     executor_config: ExecutorConfig = field(default_factory=ExecutorConfig)
 
+    # --- 路径 ---
+    storage_root: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parent.parent / "storage"
+    )
+    """运行期落盘目录（SQLite 库 storage/app.db、JWT 密钥 storage/secret.key）。
+    注意与 server.STORAGE_ROOT（storage/session，单次运行现场）区分开。
+    测试里一律由夹具指向 tmp 目录，绝不让用例碰真实 storage/。"""
+
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
         _load_dotenv(dotenv_path or Path(__file__).resolve().parent.parent / ".env")
@@ -94,6 +102,10 @@ class Settings:
             history_keep_turns=_read_int("HISTORY_KEEP_TURNS", 4),
             executor=os.environ.get("EXECUTOR", "docker").strip() or "docker",
             env=os.environ.get("APP_ENV", "dev").strip() or "dev",
+            storage_root=Path(
+                os.environ.get("STORAGE_DIR", "").strip()
+                or str(Path(__file__).resolve().parent.parent / "storage")
+            ),
         )
 
     def require_api_key(self) -> str:
@@ -111,4 +123,11 @@ class Settings:
         return self.api_key
 
 
-__all__ = ["DEFAULT_BASE_URL", "DEFAULT_MODEL", "Settings"]
+# 全局单例：auth 包（与项目一 rag-knowledge-base 同构）内部按
+# `from src.config import settings` 取存储路径，所以配置模块必须导出一个实例，
+# 而不能只在 server.py 里现造一个。server.py 仍持有自己的 `settings`，
+# 字段语义与默认值与这里完全一致。
+settings = Settings.from_env()
+
+
+__all__ = ["DEFAULT_BASE_URL", "DEFAULT_MODEL", "Settings", "settings"]
