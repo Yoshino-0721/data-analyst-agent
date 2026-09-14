@@ -127,6 +127,31 @@ def test_login_page_uses_the_auth_contract():
     assert "role" in html
 
 
+def test_login_page_handles_forced_password_change():
+    """被强制改密的账号在登录页就要被按在改密上（模块 6.5 / 9 的前端一半）。
+
+    服务端另有硬闸门（改密前除 /api/auth/me 与改密接口外一律 403），所以前端
+    要做的是两件事，这里各断言一件：
+
+    1. **不假装有"跳过"这条路** —— 改密屏有输入框与提交按钮，且标签栏会被隐藏；
+    2. **改密后换用响应里新签发的 token** —— 漏了这步，改密成功后的下一个请求
+       就是 401，用户会以为"改密把账号弄坏了"。
+    """
+    html = read_page("login")
+
+    for element_id in ("changePwdForm", "pwdCurrent", "pwdNew", "pwdConfirm",
+                       "pwdBtn", "authTabs"):
+        assert f'id="{element_id}"' in html, f"登录页缺少元素 #{element_id}"
+
+    assert "must_change_password" in html
+    assert "/api/auth/change-password" in html
+    assert "data.token" in html
+
+    # 之前那版页面写着"默认管理员 admin / admin123" —— 默认口令早就取消了，
+    # 这句话不能再回来（它会把用户引到一个根本不存在的口令上）。
+    assert "admin123" not in html
+
+
 # ---------------------------------------------------------------- 工作台
 
 

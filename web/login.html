@@ -168,6 +168,16 @@
     color: var(--text-2);
   }
 
+  .notice {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    font-size: 13px;
+  }
+
   .hidden { display: none !important; }
 </style>
 </head>
@@ -179,7 +189,7 @@
       <p class="sub" id="brandSub">登录后进入你的专属工作区</p>
     </div>
 
-    <nav class="tabs">
+    <nav class="tabs" id="authTabs">
       <button type="button" class="tab active" id="tabLogin" data-tab="login">登录</button>
       <button type="button" class="tab" id="tabRegister" data-tab="register">注册</button>
     </nav>
@@ -210,10 +220,31 @@
       <button type="submit" class="primary" id="regBtn">注册并进入</button>
     </form>
 
+    <!-- 被强制改密的账号（用的是系统生成的初始口令）会看到这一屏。
+         它**没有关闭按钮、也没有标签可切** —— 因为服务端在改密之前除
+         /api/auth/me 与改密接口外一律 403，所以"跳过"这条路本来就不存在，
+         前端不该假装有。 -->
+    <form id="changePwdForm" class="hidden" autocomplete="on">
+      <p class="notice" id="pwdNotice">
+        该账号使用的是系统生成的初始口令，请先设置自己的新口令。
+      </p>
+      <label id="pwdCurrentLabel">当前口令
+        <input id="pwdCurrent" name="current-password" type="password" autocomplete="current-password" placeholder="••••••" required>
+      </label>
+      <label>新口令
+        <input id="pwdNew" name="new-password" type="password" autocomplete="new-password" placeholder="至少 12 位，含大小写 / 数字 / 符号" required>
+      </label>
+      <label>确认新口令
+        <input id="pwdConfirm" name="confirm-password" type="password" autocomplete="new-password" placeholder="••••••" required>
+      </label>
+      <button type="submit" class="primary" id="pwdBtn">设置新口令并进入</button>
+    </form>
+
     <div id="error" class="error hidden" role="alert"></div>
 
     <p class="hint">
-      首次部署会引导一个默认管理员 <code>admin</code> / <code>admin123</code>，登录后请立即修改密码。
+      首次部署会引导一个管理员账号 <code>admin</code>：初始口令取 <code>ADMIN_PASSWORD</code>；
+      没设的话启动日志会用醒目横幅打印一串随机口令（只显示一次），该账号首次登录必须先改密。
     </p>
   </main>
 
@@ -228,6 +259,16 @@ const USER_KEY  = 'auth_user';
 
 const $ = id => document.getElementById(id);
 
+/* ---- 强制改密状态 ---- */
+
+/** 是否正处于"必须先改密"流程：为真时不允许切回登录/注册。 */
+let gated = false;
+/** 被强制改密的账号与它的 token。 */
+let gatedUser = null;
+let gatedToken = null;
+/** 登录/注册时用户刚输入的口令 —— 有它就不必再让用户填一遍"当前口令"。 */
+let knownCurrentPassword = null;
+
 function showError(message) {
   const box = $('error');
   box.textContent = message || '';
@@ -239,11 +280,15 @@ function setBusy(button, busy, label) {
   button.textContent = busy ? '请稍候…' : label;
 }
 
-/** 统一请求封装：解析 JSON、把后端的 detail 变成可读错误。 */
-async function postJSON(url, payload) {
+/** 统一请求封装：解析 JSON、把后端的 detail 变成可读错误。
+
+    ``token`` 可选：改密接口需要登录态，而登录/注册不需要。 */
+async function postJSON(url, payload, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = 'Bearer ' + token;
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: headers,
     body: JSON.stringify(payload),
   });
   let data = null;
@@ -266,10 +311,65 @@ function landingFor(user) {
 
 function enter(data) {
   saveSession(data);
+  if (data.user && data.user.must_change_password) {
+    // 系统生成的初始口令只够证明"你是本人"，还不能进去用 —— 先按在改密上。
+    // 此时 knownCurrentPassword 就是他刚输入的那串，不必再问一遍。
+    showChangePassword(data.user, data.token);
+    return;
+  }
   location.replace(landingFor(data.user));
 }
 
+/** 露出强制改密屏。没有"跳过"这条路 —— 服务端也不会放行。 */
+function showChangePassword(user, token) {
+  gated = true;
+  gatedUser = user;
+  gatedToken = token || localStorage.getItem(TOKEN_KEY);
+  $('authTabs').classList.add('hidden');
+  $('loginForm').classList.add('hidden');
+  $('registerForm').classList.add('hidden');
+  $('changePwdForm').classList.remove('hidden');
+  const known = knownCurrentPassword !== null && knownCurrentPassword !== '';
+  $('pwdCurrentLabel').classList.toggle('hidden', known);
+  $('pwdCurrent').required = !known;
+  showError('');
+}
+
+async function submitPasswordChange() {
+  const newPassword = $('pwdNew').value;
+  const current = (knownCurrentPassword !== null && knownCurrentPassword !== '')
+    ? knownCurrentPassword
+    : $('pwdCurrent').value;
+  if (!current) { showError('请填写当前口令'); return; }
+  if (newPassword !== $('pwdConfirm').value) { showError('两次输入的新口令不一致'); return; }
+  // 口令强度由服务端仲裁（长度 / 字符种类 / 弱口令表），前端不复制那套规则 ——
+  // 复制一份就是两个真相来源，策略一改前端就会拦住合法口令。
+
+  const button = $('pwdBtn');
+  showError('');
+  setBusy(button, true, '设置新口令并进入');
+  try {
+    const data = await postJSON(
+      '/api/auth/change-password',
+      { old_password: current, new_password: newPassword },
+      gatedToken,
+    );
+    // ⚠️ 改密会让**此前签发的 token 立即失效**，所以必须换用响应里新签发的这一个。
+    // 漏了这一步，改密成功后的下一个请求就是 401 —— 用户会以为"改密把账号弄坏了"。
+    const token = data.token || gatedToken;
+    localStorage.setItem(TOKEN_KEY, token);
+    const resp = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + token } });
+    const user = resp.ok ? await resp.json() : { ...gatedUser, must_change_password: false };
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    location.replace(landingFor(user));
+  } catch (err) {
+    showError(err.message);
+    setBusy(button, false, '设置新口令并进入');
+  }
+}
+
 function switchTab(name) {
+  if (gated) return; // 强制改密期间不允许切回登录/注册
   const isLogin = name === 'login';
   $('tabLogin').classList.toggle('active', isLogin);
   $('tabRegister').classList.toggle('active', !isLogin);
@@ -289,6 +389,12 @@ async function resumeIfSignedIn() {
     if (!resp.ok) throw new Error('stale');
     const user = await resp.json();
     localStorage.setItem(USER_KEY, JSON.stringify(user));
+    if (user.must_change_password) {
+      // 持有 token 但库里记着"必须先改密"：直接放行会被服务端处处 403，
+      // 所以在这里就按在改密屏上。这条路径拿不到已知口令，让他自己填。
+      showChangePassword(user, token);
+      return;
+    }
     location.replace(landingFor(user));
   } catch (err) {
     // token 失效/被禁用：清掉，留在登录页
@@ -312,10 +418,11 @@ function bindLogin() {
     showError('');
     const button = $('loginBtn');
     setBusy(button, true, '登录');
+    knownCurrentPassword = $('loginPassword').value;
     try {
       enter(await postJSON('/api/auth/login', {
         account: $('loginAccount').value.trim(),
-        password: $('loginPassword').value,
+        password: knownCurrentPassword,
       }));
     } catch (err) {
       showError(err.message);
@@ -334,6 +441,7 @@ function bindRegister() {
 
     const button = $('regBtn');
     setBusy(button, true, '注册并进入');
+    knownCurrentPassword = password;
     try {
       enter(await postJSON('/api/auth/register', {
         username: $('regUsername').value.trim(),
@@ -347,12 +455,20 @@ function bindRegister() {
   });
 }
 
+function bindPasswordChange() {
+  $('changePwdForm').addEventListener('submit', event => {
+    event.preventDefault();
+    submitPasswordChange();
+  });
+}
+
 function boot() {
   if (BRANDING.title) $('brandTitle').textContent = BRANDING.title;
   if (BRANDING.subtitle) $('brandSub').textContent = BRANDING.subtitle;
   bindTabs();
   bindLogin();
   bindRegister();
+  bindPasswordChange();
   resumeIfSignedIn();
 }
 
