@@ -8,6 +8,11 @@
 
 为什么不用 ``asyncio.Semaphore``：端点是同步函数、跑在线程里，那里没有事件循环可以
 await。这里要的是"限并发"，不是"非阻塞 IO"，``threading.BoundedSemaphore`` 正是这个语义。
+
+**这是进程内实现，只约束本进程的并发。** 多 worker / 多实例部署时，实际并发上限是
+``MAX_CONCURRENT_QUERIES × worker 数`` —— 与 ``src/auth/throttle.py`` 是同一个取舍：
+真要全局限流，那是"引入共享存储"的决策，不该由这里悄悄替运维决定，所以只把代价
+写清楚，不假装自己是分布式限流。
 """
 
 from __future__ import annotations
