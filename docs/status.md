@@ -91,6 +91,32 @@
 3. **模块 13 迁移未执行**：等网络恢复后 `git ls-remote` 核实 p1 远端是否已有内容（Q1），
    再按 Phase 0→4 走。目标根 `D:\dev-workspace\`、`deepseek-harness` 移到 `D:\tools\`。
 
+4. **R2 第 2 条（错误结构）—— 交接（未开始）**
+
+   上下文到上限时停在这里，按 §5.3 不在"跑不完的跨文件步骤"上动手。以下事实都已核实，
+   下一轮不必重新探：
+
+   - **p1（`src/server.py`）目前没有**任何 `exception_handler`：未预期异常交给 Starlette
+     默认处理器 → **21 字节纯文本 500**（前端只能显示"请求失败（HTTP 500）"）。
+     新增位置：请求 id 中间件附近即可（`request_id.install()` 与 `_attach_request_id`
+     已在文件里）。
+   - **p2（`src/server.py:88-105`）已有** `@app.exception_handler(Exception)`，其
+     `content={"detail": f"服务器内部错误：{exc!s}"[:500]}` 要换成
+     `{"detail": "服务器内部错误", "request_id": request_id.of(request)}`，
+     并**显式** `headers={request_id.REQUEST_ID_HEADER: rid}` ——
+     探针结论 3：错误路径上中间件根本没机会给响应加头。`logger.exception(...)` 保留，
+     **堆栈只进日志**。
+   - **p2 既有测试** `tests/test_server.py:391-412` 的三条断言（500 / `application/json` /
+     `"detail" in body`）在新结构下**仍然成立**（保留了 `detail` 键），无需改动；
+     只需**新增两条**：哨兵异常消息**不在响应体**、**在日志里**（`caplog`）。
+   - **测试必须用** `TestClient(app, raise_server_exceptions=False)`：默认 `True` 会把异常
+     直接抛给测试代码而不是让你拿到 500 响应。这条已写进 `tests/test_request_id.py` 的
+     模块 docstring。
+   - 测试数 **+2/项目** → README 需同步到 **472 / 662**。
+   - 收尾顺序：`docs:` 标 R2 完成 → **模块 13**（先
+     `git ls-remote --heads https://github.com/Yoshino-0721/rag-knowledge-base.git`
+     核实 p1 远端是否已有内容，即 Q1）。
+
 ## 3. 关键上下文（新会话最容易踩的三类）
 
 ### 3.1 两仓库刻意同构
