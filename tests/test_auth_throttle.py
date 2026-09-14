@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 
+from src.auth import throttle
 from src.config import settings
 from tests.conftest import TEST_ADMIN_PASSWORD, register_and_login
 
@@ -130,3 +131,39 @@ class TestLoginThrottle:
 
         assert detail == "用户名或密码不正确"
         assert "剩余" not in detail
+
+
+def test_tracked_accounts_stay_bounded_under_username_flood():
+    """换用户名洪泛不能把节流表撑爆。
+
+    这条守的是模块里**唯一的硬性内存保证**。原实现的回收条件是
+    「已解锁**且** ``failures == 0``」，而洪泛留下的条目 ``failures`` 恒 >= 1，
+    永远不满足 —— 注释声称防的正是这件事，实际挡不住。修完必须由测试钉住。
+    """
+    throttle.reset()
+    try:
+        for index in range(20_000):
+            throttle.record_failure(f"flood-{index}")
+
+        assert throttle.tracked_accounts() <= 10_000, "表被撑爆了"
+
+        # LRU 语义：最近用过的还在（白盒断言，测试与实现同仓）
+        assert "flood-19999" in throttle._states
+        assert "flood-0" not in throttle._states
+    finally:
+        throttle.reset()
+
+
+def test_saturated_table_still_serves_new_accounts():
+    """表在水位上时，新账号照样能被计数并锁定（不能因为回收而失效）。"""
+    throttle.reset()
+    try:
+        for index in range(10_500):
+            throttle.record_failure(f"filler-{index}")
+
+        for _ in range(5):  # 阈值默认 5 次
+            throttle.record_failure("victim")
+
+        assert throttle.locked_seconds_remaining("victim") > 0
+    finally:
+        throttle.reset()

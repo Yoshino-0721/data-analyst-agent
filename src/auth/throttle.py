@@ -26,12 +26,16 @@ _lock = threading.Lock()
 # 内存上限：账号名来自请求体，是不可信输入。没有上限的话，
 # 攻击者每请求换一个用户名就能把这张表撑爆（内存 DoS）。
 _MAX_TRACKED_ACCOUNTS = 10_000
+# 触顶时一次回收到这个水位：避免"每插入一条就淘汰一条"的抖动。
+# 回收本身是 O(n log n)，摊销到每 1000 次插入才做一次。
+_PRUNE_TARGET = _MAX_TRACKED_ACCOUNTS * 9 // 10
 
 
 @dataclass
 class _State:
     failures: int = 0
     locked_until: float = 0.0
+    last_seen: float = 0.0
 
 
 _states: dict[str, _State] = {}
@@ -47,12 +51,40 @@ def _key(account: str) -> str:
 
 
 def _prune_locked() -> None:
-    """调用方须已持锁。表满时先清掉"已解锁且没有失败计数"的条目。"""
+    """调用方须已持锁。把表回收到 ``_PRUNE_TARGET`` 以下。
+
+    **这是本模块唯一的硬性内存保证**，所以淘汰条件必须真的能命中。
+    原实现只清「已解锁**且** ``failures == 0``」的条目 —— 可攻击者每次换用户名时，
+    新条目的 ``failures`` 恒 >= 1、永不满足条件，表照样无界增长。
+
+    现在的策略是两遍：
+
+    1. 先清「已解锁且没有失败计数」的条目（最没有保留价值的一批）；
+    2. 仍然超水位，就按 ``last_seen`` 从旧到新淘汰 —— **包括处于锁定中的条目**。
+
+    第 2 步的取舍要写明：极端洪泛下，最旧的那些锁可能被提前淘汰（节流退化为
+    "尽力而为"）。这是刻意的选择 —— 宁可"锁可能提前失效"，也不能"表无限涨"：
+    前者只是这段时间里少挡几次暴力破解，后者会把整个进程拖垮。
+    """
+
     if len(_states) < _MAX_TRACKED_ACCOUNTS:
         return
+
     now = time.monotonic()
     for key in [k for k, s in _states.items() if s.locked_until <= now and not s.failures]:
         _states.pop(key, None)
+
+    if len(_states) > _PRUNE_TARGET:
+        excess = len(_states) - _PRUNE_TARGET
+        oldest = sorted(_states.items(), key=lambda item: item[1].last_seen)[:excess]
+        for key, _ in oldest:
+            _states.pop(key, None)
+
+
+def tracked_accounts() -> int:
+    """当前被跟踪的账号数（内存上限的健康度指标）。"""
+    with _lock:
+        return len(_states)
 
 
 def locked_seconds_remaining(account: str) -> int:
@@ -61,7 +93,9 @@ def locked_seconds_remaining(account: str) -> int:
         state = _states.get(_key(account))
         if state is None:
             return 0
-        remaining = state.locked_until - time.monotonic()
+        now = time.monotonic()
+        state.last_seen = now
+        remaining = state.locked_until - now
         return int(remaining) + 1 if remaining > 0 else 0
 
 
@@ -70,6 +104,7 @@ def record_failure(account: str) -> int:
     with _lock:
         _prune_locked()
         state = _states.setdefault(_key(account), _State())
+        state.last_seen = time.monotonic()
         state.failures += 1
         threshold = max(1, int(settings.login_max_failures))
         if state.failures >= threshold:
@@ -94,4 +129,10 @@ def reset() -> None:
         _states.clear()
 
 
-__all__ = ["locked_seconds_remaining", "record_failure", "record_success", "reset"]
+__all__ = [
+    "locked_seconds_remaining",
+    "record_failure",
+    "record_success",
+    "reset",
+    "tracked_accounts",
+]
