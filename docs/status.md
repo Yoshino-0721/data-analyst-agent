@@ -75,8 +75,16 @@
 - 工具链不在 PATH：`C:\Users\YoshinoCiallo\.workbuddy\binaries\{python\envs\default\Scripts\python.exe, node\versions\22.22.2-3\node.exe, PortableGit\versions\1.2.0\cmd\git.exe}`。
 - **绝不在 PowerShell 里内联多行 Python/JS/SQL**：写成文件再执行；`.ps1` 必须
   **UTF-8 with BOM**，否则中文被按 GBK 解码、`-match '中文'` 静默不命中。
-- `Get-Content` 读 UTF-8 日志必须 `-Encoding UTF8`；`curl.exe` 传 JSON 必须写文件走
-  `--data-binary @file`（内联会被 PS 5.1 打坏 → 服务端 422）。
+- **读日志先认编码**：本机自己写的日志是 UTF-8（`-Encoding UTF8` 读它），但
+  **uvicorn 重定向出来的日志是本机 ANSI/GBK**。拿 UTF-8 去读它会变成
+  `����Ա��ʼ����`，`Select-String '中文'` **静默不命中** —— 真实踩过：连续两次
+  "找不到管理员口令横幅"，其实横幅就在文件里。这类日志用 `-Encoding Default`
+  （PS 5.1 下即 GBK）。
+  两个附带坑：① 服务还在写日志时**不要**用 `[System.IO.File]::ReadAllText`（文件被
+  占用 → `IOException`），用 `Get-Content`；② 启动横幅里是 `口  令：`（两个空格做
+  对齐），正则得写 `口\s*令：`，写 `口令：` 匹配不到。
+- `curl.exe` 传 JSON 必须写文件走 `--data-binary @file`（内联会被 PS 5.1 打坏 →
+  服务端 422）。
 - **PowerShell 变量名不区分大小写**：`$ask` 与 `$Ask` 是同一个变量（曾把路径覆盖成响应
   对象，表现为"HTTP 0 + 读到上一次的响应体"，看起来像服务端鉴权坏了）。路径变量一律带
   `Path` 后缀。
