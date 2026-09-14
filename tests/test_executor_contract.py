@@ -97,6 +97,39 @@ class TestClassifyExecution:
             is ExecStatus.RUNTIME_ERROR
         )
 
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "FileNotFoundError: [Errno 2] No such file or directory: '/data/killed.csv'",
+            "KeyError: 'killed'",
+            "the worker was killed by the operator",
+        ],
+    )
+    def test_words_containing_killed_are_not_oom(self, stderr: str):
+        """含 "killed" 的普通报错不能被判成 OOM。
+
+        判定表里曾经留着**裸词 "killed"** —— 与当初被真机打掉的裸 "oom" 是同一类错误：
+        子串匹配会把 `/data/killed.csv` 这种文件名一起吃进来，普通报错于是被报成 OOM，
+        模型跑去优化内存而不是修真正的 bug。AGENTS.md 早把"不放裸词"写成规则，
+        但那次只修了 `oom`，`killed` 一直留着，而且**没有任何测试覆盖它**。
+        """
+        assert (
+            classify_execution(exit_code=1, stderr=stderr, timed_out=False)
+            is ExecStatus.RUNTIME_ERROR
+        )
+
+    def test_bare_killed_word_is_no_longer_a_marker(self):
+        """"Killed" 这个词本身不再是判据。
+
+        它只在 shell 打印子进程被 SIGKILL 时出现，而那种情况下退出码是 137，
+        由 `exit_code == 137` 那条路径兜住（那条路径有独立用例覆盖）。
+        保留裸词只会多一类误伤，不会多认出一次真正的 OOM。
+        """
+        assert (
+            classify_execution(exit_code=1, stderr="Killed", timed_out=False)
+            is ExecStatus.RUNTIME_ERROR
+        )
+
     def test_exit_code_none_without_timeout_is_runtime_error(self):
         """进程没起来也算运行错误 —— 至少让模型看到 stderr。"""
         assert (

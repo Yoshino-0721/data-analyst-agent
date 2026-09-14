@@ -103,11 +103,14 @@ def _basename_paths(line: str) -> str:
 
 # cgroup OOM Kill 在 stderr 里通常没有任何 Python 输出，只有 Shell 层的 "Killed"；
 # Docker 也可能把容器层日志带出来
-# 注意这里**不能**放裸 "oom" —— 子串匹配会把 "boom"/"room"/"zoom" 一起吃进来，
-# 任何含这类词的普通报错都会被误判成 OOM（实测 stderr="boom" 就中招了）。
+# 注意这里**不能**放裸词 —— 子串匹配会误伤真实报错：
+#   · 裸 "oom" 会把 "boom"/"room"/"zoom" 一起吃进来（实测 stderr="boom" 就中招了）；
+#   · 裸 "killed" 会把 "/data/killed.csv" 这类文件名一起吃进来 —— 同一类错误，
+#     当初立"不放裸词"这条规则时只修了 oom，killed 一直留到现在（且没有任何测试覆盖）。
 # 要么用完整短语，要么带连字符。
+# 另外：非超时的 exit_code == 137 是 OOM 的**独立兜底路径**（见 classify_execution），
+# 所以这里少一个裸词不会漏判真正的 OOM —— shell 打印 "Killed" 的场景退出码就是 137。
 _OOM_MARKERS = (
-    "killed",
     "memoryerror",
     "out of memory",
     "cannot allocate memory",
