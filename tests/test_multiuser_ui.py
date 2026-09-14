@@ -290,6 +290,23 @@ def test_admin_page_has_no_execution_entry():
     assert "/api/upload" not in html
 
 
+def test_index_has_forced_password_change_gate():
+    """首页的强制改密闸门：元素、文案位、以及"关不掉"那一行守卫都得在。
+
+    行为层面由 `index_pwd_flow_check.js` 真跑一遍；这里守的是静态契约 ——
+    id 被改名 / 守卫那行被顺手删掉时，测试要立刻红，而不是等用户点一下遮罩发现。
+    """
+    html = read_page("index")
+
+    assert 'id="pwdTitle"' in html
+    assert 'id="pwdSub"' in html
+    assert 'id="pwdNotice"' in html
+    assert "function forcePasswordChange" in html
+    assert "if(pwdForced){ return; }" in html    # 取消 / 点遮罩共用的守卫
+    assert "openPwd(false)" in html              # 主动改密：不能被点击事件对象污染成强制模式
+    assert "await forcePasswordChange()" in html  # 改完才继续加载业务数据
+
+
 # ---------------------------------------------------------------- 行为断言（Node）
 
 MANAGED_NODE = Path(
@@ -326,3 +343,27 @@ def test_login_flow_behaviour_assertions_pass():
         check=False,
     )
     assert result.returncode == 0, f"登录页流程断言失败：\n{result.stdout}\n{result.stderr}"
+
+
+def test_index_pwd_flow_behaviour_assertions_pass():
+    """用 Node 驱动首页的**真实脚本**，验证"被闸住 → 改密 → 才放行"这条闸门。
+
+    `must_change_password=true` 的账号在改密前，服务端除身份与改密接口外一律 403；
+    首页必须先把人按在关不掉的改密框上，改完换用新 token 再继续加载业务数据。
+    这条链路跨了「按钮绑定 / 关闭守卫 / token 轮换 / boot 放行」四件事，
+    静态断言一条都证明不了 —— 守卫那行删掉，页面照样"看起来是对的"。
+    """
+    binary = _node_binary()
+    if binary is None:
+        pytest.skip("本机没有可用的 node，跳过首页流程断言")
+
+    script = Path(__file__).resolve().parent / "index_pwd_flow_check.js"
+    result = subprocess.run(
+        [binary, str(script), str(PAGES["index"])],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, f"首页流程断言失败：\n{result.stdout}\n{result.stderr}"

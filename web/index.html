@@ -286,6 +286,10 @@ pre.log.closed{display:none}
 }
 .modal input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.14)}
 .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:6px}
+.modal-sub{margin:-8px 0 14px;font-size:12.5px;color:var(--text-soft);line-height:1.5}
+.modal-notice{margin:0 0 12px;padding:9px 11px;border-radius:8px;background:rgba(79,70,229,.10);
+  border:1px solid rgba(79,70,229,.28);color:var(--text-soft);font-size:12.5px;line-height:1.5}
+.modal-notice.err{background:rgba(200,30,30,.07);border-color:rgba(200,30,30,.30);color:#c81e1e}
 .hidden{display:none!important}
 
 @media (max-width:960px){
@@ -377,13 +381,15 @@ pre.log.closed{display:none}
 
 <div class="overlay hidden" id="pwdOverlay">
   <div class="modal">
-    <h3>修改密码</h3>
+    <h3 id="pwdTitle">修改密码</h3>
+    <p class="modal-sub" id="pwdSub">改完立即生效，下次登录请使用新密码。</p>
     <label>原密码
       <input type="password" id="oldPwdInput" autocomplete="current-password">
     </label>
     <label>新密码（至少 6 位）
       <input type="password" id="newPwdInput" autocomplete="new-password">
     </label>
+    <div class="modal-notice hidden" id="pwdNotice"></div>
     <div class="modal-actions">
       <button class="mini" id="pwdCancelBtn" type="button">取消</button>
       <button class="mini" id="pwdSaveBtn" type="button">保存</button>
@@ -544,7 +550,10 @@ const el = {
   oldPwdInput: document.getElementById("oldPwdInput"),
   newPwdInput: document.getElementById("newPwdInput"),
   pwdSaveBtn: document.getElementById("pwdSaveBtn"),
-  pwdCancelBtn: document.getElementById("pwdCancelBtn")
+  pwdCancelBtn: document.getElementById("pwdCancelBtn"),
+  pwdTitle: document.getElementById("pwdTitle"),
+  pwdSub: document.getElementById("pwdSub"),
+  pwdNotice: document.getElementById("pwdNotice")
 };
 
 /* ============================ 登录态 ============================ */
@@ -988,31 +997,84 @@ function renderUserBadge(){
     + escapeHtml(user.role === "admin" ? "管理员" : "用户");
 }
 
-function openPwd(){
+/** 是否处于"必须先改密"模式；为真时这个框**关不掉**。 */
+let pwdForced = false;
+/** 强制改密完成时要放行的 boot 等待者。 */
+let pwdForcedResolve = null;
+
+function setPwdNotice(text, isError){
+  el.pwdNotice.textContent = text || "";
+  // 失败要看起来像失败：这个框盖住了聊天区，原来那句红色错误提示现在挪到了
+  // 弹层里，颜色不能还是"信息"色，否则用户会把报错当成提示读过去。
+  el.pwdNotice.classList.toggle("err", !!isError);
+  el.pwdNotice.classList.toggle("hidden", !text);
+}
+
+function openPwd(forced){
+  pwdForced = !!forced;
   el.oldPwdInput.value = "";
   el.newPwdInput.value = "";
+  el.pwdTitle.textContent = pwdForced ? "必须先修改密码" : "修改密码";
+  el.pwdSub.textContent = pwdForced
+    ? "该账号使用的是系统生成的初始口令，改完才能使用其它功能。"
+    : "改完立即生效，下次登录请使用新密码。";
+  // 隐藏而不是禁用：点了没反应的按钮比没有按钮更让人困惑
+  el.pwdCancelBtn.classList.toggle("hidden", pwdForced);
+  // 只是**提示**，不是前端校验 —— 口令强度始终由服务端仲裁
+  setPwdNotice(pwdForced ? "服务端要求：至少 12 位，且含大小写 / 数字 / 符号。" : "");
   el.pwdOverlay.classList.remove("hidden");
   el.oldPwdInput.focus();
 }
 
-function closePwd(){ el.pwdOverlay.classList.add("hidden"); }
+function closePwd(){
+  // 强制改密时不能关：取消按钮与点遮罩都走这里，一个守卫就够 ——
+  // 服务端本来也不会放行，前端不该假装能跳过。
+  if(pwdForced){ return; }
+  el.pwdOverlay.classList.add("hidden");
+}
+
+/** 强制改密：弹出关不掉的改密框，并等它改完再继续（boot 会 await 它）。 */
+function forcePasswordChange(){
+  openPwd(true);
+  return new Promise(resolve => { pwdForcedResolve = resolve; });
+}
 
 async function savePassword(){
   const oldPassword = el.oldPwdInput.value;
   const newPassword = el.newPwdInput.value;
+  const wasForced = pwdForced;
   if(newPassword.length < 6){
-    addMessage("agent", '<span style="color:#c81e1e">新密码至少 6 位</span>');
+    setPwdNotice("新密码至少 6 位", true);
     return;
   }
   try{
-    await postJSON("/api/auth/change-password", {
+    const data = await postJSON("/api/auth/change-password", {
       old_password: oldPassword,
       new_password: newPassword
     });
+    // ⚠️ 改密会让**此前签发的 token 立即失效**，必须换用响应里新签发的这一个。
+    // 漏了这步，改密成功后的下一个请求就是 401 —— 用户会以为"改密把账号弄坏了"。
+    if(data && data.token){
+      try{ localStorage.setItem(TOKEN_KEY, data.token); }catch(err){ /* 忽略 */ }
+    }
+    pwdForced = false;
     closePwd();
     addMessage("assistant", renderRich("密码已修改，下次登录请使用新密码。"));
+
+    if(wasForced){
+      // 改完用新身份校正一次（must_change_password 已变 false），再放 boot 继续
+      try{
+        const fresh = await apiFetch("/api/auth/me");
+        state.user = fresh;
+        try{ localStorage.setItem(USER_KEY, JSON.stringify(fresh)); }catch(err){ /* 忽略 */ }
+        renderUserBadge();
+      }catch(err){ /* 401 时 apiFetch 已清 token 并跳登录页 */ }
+      const resume = pwdForcedResolve;
+      pwdForcedResolve = null;
+      if(resume){ resume(); }
+    }
   }catch(err){
-    addMessage("agent", '<span style="color:#c81e1e">' + escapeHtml(err.message) + "</span>");
+    setPwdNotice(err.message, true);
   }
 }
 
@@ -1063,7 +1125,9 @@ function bindEvents(){
   // 会话行是动态渲染的 —— 统一事件委托，避免每次重渲染都要重新绑定
   el.sessionList.addEventListener("click", onSessionListClick);
 
-  el.changePwdBtn.addEventListener("click", openPwd);
+  // 包一层：直接把 openPwd 交给 addEventListener 的话，点击事件对象会被当成
+  // forced 传进去（对象恒为 truthy），于是主动改密也会变成关不掉。
+  el.changePwdBtn.addEventListener("click", () => openPwd(false));
   el.pwdCancelBtn.addEventListener("click", closePwd);
   el.pwdSaveBtn.addEventListener("click", savePassword);
   el.pwdOverlay.addEventListener("click", e => { if(e.target === el.pwdOverlay){ closePwd(); } });
@@ -1089,8 +1153,16 @@ async function boot(){
   state.user = me;
   try{ localStorage.setItem(USER_KEY, JSON.stringify(me)); }catch(err){ /* 忽略 */ }
 
-  bindEvents();
+  bindEvents();          // 必须先绑定：改密框的按钮就是在 bindEvents 里接上的
   renderUserBadge();
+
+  if(me.must_change_password){
+    // 服务端在改密之前，除 /api/auth/me 与改密接口外一律 403 —— 所以这里
+    // **不去加载任何业务数据**（调了也只是一串 403），直接把人按在改密框上，
+    // 等他改完再继续。这一步是"别让用户卡死"的前端一半。
+    await forcePasswordChange();
+    me = state.user || me;
+  }
 
   await refreshHealth();
   try{
