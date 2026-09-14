@@ -35,11 +35,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
+from . import upload_guard
 from .admin_api import router as admin_router
 from .agent.loop import AgentResult, run_agent
 from .agent.tools import ToolRuntime
@@ -241,17 +242,30 @@ def read_workspace(user: User = Depends(get_current_user)) -> dict[str, Any]:
 
 @app.post("/api/upload")
 async def upload(
+    request: Request,
     files: list[UploadFile] = File(...),
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ) -> dict[str, Any]:
-    uploads: list[tuple[str, bytes]] = []
+    """上传数据（替换当前用户的数据集）。
+
+    体积上限走**两道闸门**（见 ``src/upload_guard.py``）：先按 Content-Length
+    快速拒绝，再在读取时按累计字节兜底 —— 只信请求头会被伪造头或
+    ``Transfer-Encoding: chunked`` 绕过。
+    """
+    upload_guard.enforce_content_length(request)
+    # 整次请求共享一份预算：多个文件各自 49 MiB 也仍然写不爆磁盘
+    budget = upload_guard.limit_bytes()
+
+    uploaded: list[tuple[str, bytes]] = []
     for item in files:
-        uploads.append((item.filename or "data", await item.read()))
+        content = await upload_guard.read_within_limit(item, budget)
+        budget -= len(content)
+        uploaded.append((item.filename or "data", content))
 
     workspace = get_workspace(user.id)
     try:
-        schemas = workspace.replace_files(uploads)
+        schemas = workspace.replace_files(uploaded)
     except SchemaError as exc:
         workspace.last_error = str(exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -276,14 +290,13 @@ def ask(
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
-    if payload.session_id is None:
-        chat_session = ChatSession(user_id=user.id, title=question[:50])
-        db.add(chat_session)
-        db.commit()
-        db.refresh(chat_session)
-    else:
-        chat_session = _own_session(db, user, payload.session_id)
+    # 归属校验最先：不属于本人的会话一律 404（不泄露存在性）
+    chat_session = (
+        None if payload.session_id is None else _own_session(db, user, payload.session_id)
+    )
 
+    # 前置条件**全部**检查完再动数据库：原先"先建会话并 commit、再检查工作区为空"，
+    # 于是"没上传数据就提问"这种必然失败的请求会在库里留下一条空会话。
     # 只挂当前用户自己的文件 —— 跨用户隔离就落在这里
     workspace = get_workspace(user.id)
     if not workspace.files:
@@ -327,6 +340,12 @@ def ask(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     answer = _serialize(result)
+    if chat_session is None:
+        chat_session = ChatSession(user_id=user.id, title=question[:50])
+        db.add(chat_session)
+        # flush 只为拿到自增 id，**不提交事务**：上面任何失败都会让整个事务回滚，
+        # 不会留下一条没有任何消息的会话行。
+        db.flush()
     db.add(Message(session_id=chat_session.id, role="user", content=question))
     db.add(
         Message(

@@ -88,6 +88,8 @@ class Settings:
     # 登录节流：同一账号连续失败 N 次后锁定 M 秒（见 src/auth/throttle.py）
     login_max_failures: int = 5
     login_lock_seconds: int = 300
+    # 单次上传请求的总体积上限（字节）。默认 50 MiB。见 src/upload_guard.py
+    max_upload_size: int = 52428800
     executor_config: ExecutorConfig = field(default_factory=ExecutorConfig)
 
     # --- 路径 ---
@@ -123,6 +125,7 @@ class Settings:
             in {"1", "true", "yes", "on"},
             login_max_failures=_read_int("LOGIN_MAX_FAILURES", 5),
             login_lock_seconds=_read_int("LOGIN_LOCK_SECONDS", 300),
+            max_upload_size=_read_int("MAX_UPLOAD_SIZE", 52428800),
             storage_root=Path(
                 os.environ.get("STORAGE_DIR", "").strip()
                 or str(Path(__file__).resolve().parent.parent / "storage")

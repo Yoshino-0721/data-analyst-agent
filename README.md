@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-578%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-596%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -207,7 +207,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（578 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（596 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
@@ -356,6 +356,7 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 | `ALLOW_REGISTRATION` | `false` | 是否允许自助注册。**默认关闭**：公网部署下任何人注册成功都会消耗**站点共用**的 API Key 额度。要开通成员时临时设为 `true` 并重启，开通完改回 `false` |
 | `LOGIN_MAX_FAILURES` | `5` | 同一账号连续登录失败多少次后锁定 |
 | `LOGIN_LOCK_SECONDS` | `300` | 锁定时长（秒）。锁定期内登录返回 429 + `Retry-After` |
+| `MAX_UPLOAD_SIZE` | `52428800` | 单次上传请求的**总体积**上限（字节，默认 50 MiB）。超限返回 413；多文件共享同一份预算 |
 | `STORAGE_DIR` | `<仓库>/storage` | 落盘根目录（SQLite、各用户工作区、`secret.key`） |
 | `AUTH_DB_PATH` | `<STORAGE_DIR>/app.db` | 用户库路径，特殊部署可单独指定 |
 
@@ -374,7 +375,7 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 | GET | `/api/auth/me` | 当前登录用户 |
 | POST | `/api/auth/change-password` | 改密，body `{"old_password","new_password"}` |
 | GET | `/api/workspace` | 当前用户工作区状态（已加载的数据文件与 Schema 摘要、运行目录） |
-| POST | `/api/upload` | 上传数据（multipart，字段名 `files`），**替换**当前用户的数据集 |
+| POST | `/api/upload` | 上传数据（multipart，字段名 `files`），**替换**当前用户的数据集；总量超过 `MAX_UPLOAD_SIZE` 返回 **413** |
 | POST | `/api/ask` | 提问，body `{"question": "...", "session_id": 可选}`；返回答案、产物与**完整执行轨迹** |
 | GET | `/api/artifact/{name}` | 取产物文件（限本人工作区，穿越由 `artifact_path` 拦） |
 | POST | `/api/reset` | 清空当前用户的数据集 |
