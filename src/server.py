@@ -241,7 +241,7 @@ def read_workspace(user: User = Depends(get_current_user)) -> dict[str, Any]:
 
 
 @app.post("/api/upload")
-async def upload(
+def upload(
     request: Request,
     files: list[UploadFile] = File(...),
     user: User = Depends(get_current_user),
@@ -259,7 +259,7 @@ async def upload(
 
     uploaded: list[tuple[str, bytes]] = []
     for item in files:
-        content = await upload_guard.read_within_limit(item, budget)
+        content = upload_guard.read_within_limit(item, budget)
         budget -= len(content)
         uploaded.append((item.filename or "data", content))
 
@@ -275,7 +275,16 @@ async def upload(
     return {"files": [_file_info(schema) for schema in schemas]}
 
 
+# 并发闸门：查询端点是同步 def，占的是 anyio 线程池（默认 40 槽）。没有闸门时
+# 几十个并发提问就能把线程池占满，连 /api/health 都要排队 —— 而每次提问还会真花钱
+# 调模型。满员直接 429 快速失败，不排队（排队只把所有人一起拖慢）。
+from src.concurrency import AsyncSlot, limit_concurrency, slot_count
+
+_QUERY_SLOTS = AsyncSlot("query", slot_count("MAX_CONCURRENT_QUERIES", 4))
+
+
 @app.post("/api/ask")
+@limit_concurrency(_QUERY_SLOTS, "并发提问已满，请稍后重试")
 def ask(
     payload: AskRequest,
     user: User = Depends(get_current_user),

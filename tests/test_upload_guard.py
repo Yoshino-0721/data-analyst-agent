@@ -13,8 +13,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from fastapi import HTTPException
 
@@ -31,12 +29,18 @@ class FakeRequest:
 
 
 class FakeUpload:
-    """只提供 ``read(size)`` 的最小上传替身。"""
+    """只提供 ``.file.read(size)`` 的最小上传替身。
+
+    ``read_within_limit`` 现在是**同步**实现，读的是 ``upload.file``
+    （真实的 ``UploadFile.file`` 是底层 SpooledTemporaryFile），
+    所以把 ``file`` 指回自身即可。
+    """
 
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self.file = self
 
-    async def read(self, size: int = -1) -> bytes:
+    def read(self, size: int = -1) -> bytes:
         chunk, self._data = self._data[:size], self._data[size:]
         return chunk
 
@@ -77,19 +81,17 @@ class TestContentLengthGate:
 class TestCumulativeReadGate:
     def test_within_budget_returns_full_content(self, tiny_limit):
         data = b"y" * (LIMIT - 1)
-        assert asyncio.run(upload_guard.read_within_limit(FakeUpload(data), LIMIT)) == data
+        assert upload_guard.read_within_limit(FakeUpload(data), LIMIT) == data
 
     def test_over_budget_is_rejected(self, tiny_limit):
         """**伪造 Content-Length 或 chunked 时真正生效的就是这道门。**"""
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(
-                upload_guard.read_within_limit(FakeUpload(b"x" * (LIMIT + 1)), LIMIT)
-            )
+            upload_guard.read_within_limit(FakeUpload(b"x" * (LIMIT + 1)), LIMIT)
         assert exc.value.status_code == 413
 
     def test_zero_budget_is_rejected_immediately(self, tiny_limit):
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(upload_guard.read_within_limit(FakeUpload(b"x"), 0))
+            upload_guard.read_within_limit(FakeUpload(b"x"), 0)
         assert exc.value.status_code == 413
 
     def test_content_spanning_chunks_is_complete(self, monkeypatch):
@@ -98,17 +100,17 @@ class TestCumulativeReadGate:
         monkeypatch.setattr(settings, "max_upload_size", budget)
         data = b"z" * (upload_guard.CHUNK_SIZE * 2 + 7)
 
-        assert asyncio.run(upload_guard.read_within_limit(FakeUpload(data), budget)) == data
+        assert upload_guard.read_within_limit(FakeUpload(data), budget) == data
 
     def test_shared_budget_across_files(self, tiny_limit):
         """多文件共享预算：第二个文件会把总量顶过上限并触发 413。"""
         first = FakeUpload(b"a" * (LIMIT - 10))
         remaining = LIMIT
-        asyncio.run(upload_guard.read_within_limit(first, remaining))  # 读掉大半
+        upload_guard.read_within_limit(first, remaining)  # 读掉大半
         remaining -= LIMIT - 10
 
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(upload_guard.read_within_limit(FakeUpload(b"b" * 50), remaining))
+            upload_guard.read_within_limit(FakeUpload(b"b" * 50), remaining)
         assert exc.value.status_code == 413
 
 

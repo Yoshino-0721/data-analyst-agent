@@ -56,11 +56,16 @@ def enforce_content_length(request: Request, limit: int | None = None) -> None:
         raise _too_large(limit)
 
 
-async def read_within_limit(upload: UploadFile, remaining: int) -> bytes:
+def read_within_limit(upload: UploadFile, remaining: int) -> bytes:
     """读取一个上传文件；累计超过 ``remaining`` 字节立即中断。
 
     ``remaining`` 是**整次请求**剩余的预算（调用方按已读字节递减），
     所以多文件上传的总量也被同一份上限约束。
+
+    **同步实现**：调用方是同步 ``def`` 端点（FastAPI 会把它放进线程池执行），
+    所以直接读 ``upload.file``（底层 SpooledTemporaryFile），而不是
+    ``await upload.read()`` —— 后者只能在事件循环里用；而"在事件循环里做这段
+    阻塞读取"恰恰是要避免的事（分块 + 后续 embedding 都是阻塞活）。
     """
     if remaining <= 0:
         raise _too_large(limit_bytes())
@@ -68,7 +73,7 @@ async def read_within_limit(upload: UploadFile, remaining: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
-        chunk = await upload.read(CHUNK_SIZE)
+        chunk = upload.file.read(CHUNK_SIZE)
         if not chunk:
             break
         total += len(chunk)

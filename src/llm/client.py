@@ -155,13 +155,22 @@ class ZhipuClient:
         import httpx
         from openai import OpenAI
 
+        # max_retries 必须显式给：SDK 默认重试 2 次，一次卡住的调用会变成三次，
+        # 成本翻倍、占住线程池的时间也翻倍。失败就让上层看见，由编排层决定怎么办。
+        max_retries = 1
         if proxy:
             return OpenAI(
                 api_key=api_key,
                 base_url=base_url,
                 http_client=httpx.Client(proxy=proxy, timeout=timeout),
+                max_retries=max_retries,
             )
-        return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     def chat(
         self,
