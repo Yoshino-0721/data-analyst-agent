@@ -66,6 +66,7 @@
 | # | 文件:行号 | 问题 | 一句话判断（影响面 + 建议动作） |
 |---|---|---|---|
 | N1 | rag `src/admin_api.py:187-203,206-220,236-246` | 管理后台的全站会话、单会话消息、全站文档三个列表都是**全量返回**，没有分页/时间范围/条数上限（`/stats` 已给了计数，但没有下钻用的分页参数） | **锦上添花**：单机自用/小团队规模下完全够用，只有数据涨到上千行时管理后台首屏才会明显变慢——想改就加 `limit/offset`（或按 `user_id` 已支持的过滤 + 时间窗），不改也不影响正确性。 |
+| N2 | daa `src/sandbox/analysis.py`（hint 分类处，`classify_execution` 旁边） | 执行失败回填的 hint 只有粗分类（列名 / 超时 / 一般报错）。2026-09-15 实测：模型把 `FancyArrowPatch` 的 `mutation_scale` 写给 `plt.Rectangle`，`AttributeError: Rectangle.set() got an unexpected keyword argument` 拿到的是「若为 KeyError/列名相关错误，先用 get_schema 确认列名」这条**完全无关**的提示 | **锦上添花**：模型自己 1 步就改对了（step4 报错 → step5 去掉该参数即 OK），穷举 API 误用进 hint 属于过度设计、维护成本大于收益 —— **本轮明确不做**。真要做，只加判据稳定、可穷举的少数几类（例如 `unexpected keyword argument` → 「检查该参数是否属于这个 API / 这个版本」），并且必须有「不认识就退回原提示」的兜底。 |
 
 ---
 
@@ -84,3 +85,4 @@
 | T2 上传落盘非原子 | ✅ 已完成 | p1 `c086b66` | `write_bytes` → 同目录 `.incoming` 临时文件 + `os.replace`（原子；且**不涉及删除** —— 本机删除有钩子，见 AGENTS.md §2.9）；文件名归一化改复用 `src/paths.py:safe_target_name`，全仓只留一处实现。回归测试 3 条。p2 的写入走 `session.replace_files`，**不在本条范围**（待核它是否也需原子化）。 |
 | T7 重置口令未置首登改密 | ✅ 已完成（范围 A） | p1 `5e1516c` / p2 `800dfa3` | 生成式与显式指定两条路径都置 `must_change_password=True`。**刻意不做强度校验**：安全边界在闸门上、不在初始口令的强度上，加强度校验会破坏"管理员下发口头临时码"这个合理场景。既有断言一条未改（重置后**登录**仍 200，闸门拦的是业务接口）；新增 2 条覆盖全链路。前端管理台重置抽屉补了"首次登录必须先修改密码"。 |
 | R2 未预期异常对外呈现 | ✅ 已完成 | p1 `b982993` / p2 `974fd79`（第 1 条：请求 id 机制）+ p1 `4934b93` / p2 `bb571de`（第 2 条：统一错误结构） | 两项目统一成「**固定中文文案 + 请求 id**」，**异常细节只进日志**：p1 从 21 字节纯文本 `Internal Server Error` 升级为 JSON（`detail` + `request_id`），p2 去掉 `f"服务器内部错误：{exc!s}"` 的泄露。id 由新增的 `src/request_id.py` 提供（两仓库逐字相同）：`X-Request-ID` 外部可传但走 `^[A-Za-z0-9._-]{1,64}$` 白名单，非法值不回声，缺失则现生成。三条探针事实值得记住：① 错误路径上异常处理器**读不到**中间件的 ContextVar（`finally` 已复位），id 的真相只在 `request.state`；② 处理器必须**显式** `headers=`，中间件没机会给 500 响应加头；③ 测试必须 `TestClient(app, raise_server_exceptions=False)`。字段名沿用 `detail`（前端已按它解析），但语义从"异常详情"反转为"固定文案 + 可上报 id"。测试 +1/项目（471 / 661）：p1 新增 `tests/test_error_contract.py`，p2 新增 1 条并**改写** `tests/test_server.py:413` —— 原断言 `assert "boom" in body["detail"]` 钉死的正是旧泄露行为，见 AGENTS.md §5.4。 |
+| （非清单条目）演示期新发现的三处缺陷 | ✅ 已完成 | p2 `3c76c2f` / `b47bfb9` / `2f1f280` / `0a42b48`（p1 无对应改动） | 都是 2026-09-15 在第二个项目网页上实测发现的，**不属于模块 12 原清单**：① **本地执行器下提示词仍教模型用 `/data`** → 首次读文件必失败、模型满盘找文件撞上 30 秒超时、8 步预算烧光（`3c76c2f`，机制与教训见 AGENTS.md §2.5）；② **产物图一律 401**：`<img src>` 不会带 Bearer 而接口要登录态，页面全是破图（`b47bfb9`，改走带 token 取回 → blob URL）；③ **画图字体按模式给说法**：本机 YaHei 排最前、容器别自己设（`2f1f280`），外加从 stderr 发现缺字形的运行时兜底（`0a42b48`）。 |
