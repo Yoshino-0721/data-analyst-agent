@@ -1,4 +1,4 @@
-"""本地调试执行器下的「模型侧数据路径」契约（2026-09-15 真实事故的回归）。
+"""「按执行器模式给说法」的契约（2026-09-15 真实事故的回归）。
 
 事故回放（会话「根据月的数据进行分析画图」，8 步预算全烧光、`terminated_by=max_steps`）：
 
@@ -14,12 +14,13 @@
 相对路径读（`src/sandbox/local_executor.py` 的 `_prepare`）。提示与实现对不上，
 于是每一步第一次读文件必失败。
 
-两个项目同构的是**架构与写法**，不是**每个模式的路径语义**：容器里 `/data` 是挂载点，
-本地模式下它不存在。这个文件把三件事钉住：
+两个项目同构的是**架构与写法**，不是**每个模式的语义**：容器里 `/data` 是挂载点、
+matplotlibrc 也配好了中文字体，本地模式下两样都没有。这个文件钉住两类说法：
 
-1. 模型侧路径根跟随执行器模式（`mount_root_for_executor`）；
-2. 系统提示在本地模式给出的是**可以直接读取的文件名**，且不出现 `/data`、`/out`；
-3. 工具说明书在本地模式显式警告「没有 /data、别满盘找文件」。
+- **路径**：模型侧路径根跟随执行器模式（`mount_root_for_executor`）；本地模式给出的是
+  可以直接读取的**文件名**，且不出现 `/data`、`/out`；工具说明书显式警告「别满盘找文件」；
+- **画图字体**：本地模式把 `Microsoft YaHei` 排最前（有粗体、覆盖 Ö 这类字符），
+  容器模式则明令**不要**自己设 `font.sans-serif`（会顶掉镜像配好的 Noto Sans CJK）。
 """
 
 from __future__ import annotations
@@ -145,6 +146,34 @@ class TestToolDescriptionPaths:
             assert "subprocess" in desc and "socket" in desc
             assert "print()" in desc
             assert "照抄" in desc
+
+
+# --------------------------------------------------------------- 画图字体
+
+
+class TestChartFontHint:
+    """字体也是「两个实现的语义差异」：镜像改好了 matplotlibrc，本机什么都没有。
+
+    2026-09-15 实测：模型硬编码 `['SimHei', 'Microsoft YaHei', 'DejaVu Sans']`，
+    本机因此报 `findfont: Failed to find font weight bold for SimHei`，
+    且 `HUNKEMÖLLER` 的 Ö 渲染成豆腐块。容器里更糟 —— SimHei 根本不存在，
+    这一行会把镜像配好的 Noto Sans CJK 顶掉，中文全变方块。
+    """
+
+    def test_local_hint_puts_yahei_first(self):
+        desc = _run_python_description(local=True)
+        assert "Microsoft YaHei" in desc
+        assert desc.index("Microsoft YaHei") < desc.index("SimHei"), \
+            "YaHei 必须排在 SimHei 前面（SimHei 无粗体字重、缺拉丁扩展字符）"
+
+    def test_docker_hint_forbids_overriding_fonts(self):
+        desc = _run_python_description(local=False)
+        assert "matplotlibrc" in desc and "不要" in desc
+        assert "Microsoft YaHei" not in desc, "容器里没有这些 Windows 字体，别让模型去写"
+
+    def test_both_modes_still_mention_matplotlib(self):
+        for local in (True, False):
+            assert "matplotlib" in _run_python_description(local=local)
 
 
 # --------------------------------------------------------------- 会话提示串

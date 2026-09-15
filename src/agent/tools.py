@@ -64,6 +64,20 @@ def build_tool_schemas(*, local: bool = False) -> list[dict[str, Any]]:
         else "2. 工作目录就是 /out —— 直接用相对路径写文件"
         "（如 plt.savefig('chart.png')），只有 /out 可写；\n"
     )
+    # 字体：容器镜像已经把 matplotlibrc 改成 Noto Sans CJK，本机则什么都没有。
+    # 模型最常见的自杀式写法是硬编码 `['SimHei', ...]` ——
+    #   容器里：SimHei / 微软雅黑都不存在，这一行会把镜像配好的默认值**顶掉**，
+    #           matplotlib 退回 DejaVu Sans，中文全变方块；
+    #   本机：SimHei 没有粗体字重、也缺 Ö 这类拉丁扩展字符（2026-09-15 实测
+    #         `findfont: Failed to find font weight bold for SimHei` + 豆腐块）。
+    font_rule = (
+        "画图要显示中文时，把字体设成 `['Microsoft YaHei', 'SimHei', 'DejaVu Sans']`"
+        " —— YaHei **必须排最前**：它有粗体字重，也覆盖 Ö 这类字符。\n"
+        if local
+        else "画图**不要**自己设 font.sans-serif：镜像里的 matplotlibrc 已经配好中文字体"
+        "（Noto Sans CJK）；容器里没有 SimHei 这类 Windows 字体，写了会顶掉默认值、"
+        "中文反而变方块。\n"
+    )
     run_python_description = (
         "在隔离沙箱里执行一段 Python 代码，用于读取和分析数据。\n"
         "环境里有 pandas / numpy / matplotlib / openpyxl，**没有网络**。\n"
@@ -72,7 +86,8 @@ def build_tool_schemas(*, local: bool = False) -> list[dict[str, Any]]:
         + work_dir_rule
         + "3. 用 print() 输出关键结论，只有 stdout 会回传给你；\n"
         "4. 不要用 subprocess / socket / requests / os.system，也不要读写数据文件与工作目录之外的路径；\n"
-        "5. 中文输出正常，无需额外设置编码。"
+        "5. 中文输出正常，无需额外设置编码。\n"
+        "图表提示：" + font_rule.rstrip("\n")
     )
     if local:
         run_python_description += LOCAL_MODE_HINT
