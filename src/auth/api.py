@@ -1,7 +1,7 @@
 """/api/auth/* 路由：注册、登录、当前用户与修改密码。
 
-注册即登录（直接返回 token），前端拿到后按角色跳转：admin → 管理后台，
-user → 工作台。登录账号支持用户名或邮箱。
+**注册不再等于开号**：自助注册提交后落成 ``pending``，管理员审核通过才能登录
+（见 ``models.STATUS_*`` 与 ``_login_blocked_reason``）。登录账号支持用户名或邮箱。
 """
 
 from __future__ import annotations
@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session as OrmSession
 
 from src.auth import throttle
 from src.auth.deps import get_current_user, get_db
-from src.auth.models import User
+from src.auth.models import (
+    STATUS_ACTIVE,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    User,
+)
 from src.auth.security import (
     create_token,
     hash_password,
@@ -56,10 +61,28 @@ def user_payload(user: User) -> dict:
         "email": user.email,
         "role": user.role,
         "is_active": user.is_active,
+        # 审核状态：前端据它区分"待审核 / 已通过 / 未通过"，也用于管理后台的待审核列表
+        "status": user.status,
         # 前端据此把用户按在"改密"这一步上（服务端另有硬闸门，见 deps）
         "must_change_password": user.must_change_password,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
+
+
+def _login_blocked_reason(user: User) -> str | None:
+    """账号能不能登录；不能则给出**对用户可行动**的说法。
+
+    三种"被挡住"的情形刻意分开：待审核（等一等就行）、审核未通过（得找管理员）、
+    被停用（原本能用、现在被停了）。合成一句话会让用户完全不知道下一步做什么 ——
+    而"不知道该做什么"正是这类闸门最容易被当成"网站坏了"的地方。
+    """
+    if user.status == STATUS_PENDING:
+        return "注册申请正在等待管理员审核，审核通过后即可登录"
+    if user.status == STATUS_REJECTED:
+        return "注册申请未通过审核，请联系管理员"
+    if not user.is_active:
+        return "账号已被禁用，请联系管理员"
+    return None
 
 
 def validate_username(username: str) -> None:
@@ -91,10 +114,13 @@ def _register_validations(payload: RegisterRequest) -> None:
 
 @router.post("/register")
 def register(payload: RegisterRequest, db: OrmSession = Depends(get_db)) -> dict:
+    """提交注册申请。**不直接开号、也不发 token** —— 账号落成 ``pending``。
+
+    由管理员在后台审核通过（``PATCH /api/admin/users/{id}`` 置 status=active）后，
+    本人才能用注册时设的口令登录。
+    """
     if not settings.allow_registration:
-        # 默认关闭：公网部署下，任何人注册成功都会消耗**站点共用**的 API Key 额度
-        # （上传文档要 embedding、提问要 chat）。开通成员请管理员在服务端设置
-        # ALLOW_REGISTRATION=true 后重启。
+        # 显式关掉自助注册的部署：连申请都收不到，只能请管理员建号。
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="本站已关闭自助注册，请联系管理员开通账号",
@@ -116,12 +142,18 @@ def register(payload: RegisterRequest, db: OrmSession = Depends(get_db)) -> dict
         email=payload.email.lower(),
         password_hash=hash_password(payload.password),
         role="user",
+        # 自助注册的账号**先不启用**：批准之前不能登录，也就不会消耗站点共用的
+        # API Key 额度。"注册开放"与"立刻能用"是两件事，这里把它们分开。
+        is_active=False,
+        status=STATUS_PENDING,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    return {"token": create_token(user), "user": user_payload(user)}
+    # 刻意**不发 token**：账号还没被批准，发了也会在登录闸门被拒 ——
+    # 前端拿到 token 反而会以为注册即登录成功了。返回 pending 标志让前端说清楚。
+    return {"pending": True, "user": user_payload(user)}
 
 
 @router.post("/login")
@@ -156,12 +188,13 @@ def login(payload: LoginRequest, db: OrmSession = Depends(get_db)) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码不正确",
         )
-    if not user.is_active:
-        # 口令是对的、只是账号被禁用：**不计失败**。否则管理员一禁用某人，
-        # 对方只要拿旧口令猛试就能把他锁上（把封禁变成被封锁）。
+    blocked = _login_blocked_reason(user)
+    if blocked:
+        # 口令是对的、只是账号还不能用（待审核 / 未通过 / 被停用）：**不计失败**。
+        # 否则管理员一停用某人，对方只要拿旧口令猛试就能把他锁上（把封禁变成被封锁）。
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="账号已被禁用，请联系管理员",
+            detail=blocked,
         )
 
     throttle.record_success(payload.account)

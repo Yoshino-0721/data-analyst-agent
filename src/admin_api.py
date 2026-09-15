@@ -25,7 +25,14 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .auth.api import validate_email, validate_username
 from .auth.deps import get_db, require_admin
-from .auth.models import ChatSession, Dataset, Message, User
+from .auth.models import (
+    STATUS_ACTIVE,
+    STATUS_PENDING,
+    ChatSession,
+    Dataset,
+    Message,
+    User,
+)
 from .auth.security import generate_strong_password, hash_password
 from .config import settings
 from .datasets import dataset_payload, delete_dataset
@@ -49,6 +56,9 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     role: str | None = Field(default=None, pattern="^(user|admin)$")
     is_active: bool | None = None
+    # 审核动作：active=通过（顺带启用）、rejected=不通过（顺带停用）、pending=打回待审。
+    # 与 is_active 同时给时以 is_active 为准 —— 允许"已通过但现在停用"这种组合。
+    status: str | None = Field(default=None, pattern="^(pending|active|rejected)$")
 
 
 class PasswordReset(BaseModel):
@@ -65,6 +75,8 @@ def _user_row(user: User) -> dict:
         "email": user.email,
         "role": user.role,
         "is_active": user.is_active,
+        # 审核状态：管理后台据此把"待审核"挑出来，通过/拒绝就走 PATCH status
+        "status": user.status,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -73,8 +85,10 @@ def _user_row(user: User) -> dict:
 def create_user(payload: UserCreate, db: OrmSession = Depends(get_db)) -> dict:
     """管理员建号：口令由服务端生成、**只在这次响应里返回一次**，并强制首登改密。
 
-    与自助注册的分工：自助注册默认关闭（``ALLOW_REGISTRATION``），所以"谁能有账号"
-    这件事从"任何人自助"变成了"管理员开"。两条安全承诺因此落在这条端点上：
+    与自助注册的分工：自助注册（``ALLOW_REGISTRATION``，默认开启）出来的账号是
+    ``pending``，要管理员审核通过才能登录；而这条端点建出来的账号**直接可用**
+    （``status=active``）—— 毕竟是管理员本人开的号，等于审核已经在动作里完成了。
+    两条安全承诺因此落在这条端点上：
 
     1. 口令**不落库明文**（库里只有 bcrypt 哈希），所以任何读接口都拿不回它 ——
        真丢了就用「重置密码」重新生成一个；
@@ -135,13 +149,21 @@ def update_user(
     self_lockout = user_id == admin.id and (
         (payload.role is not None and payload.role != "admin")
         or (payload.is_active is False)
+        # 审核状态也会连带停用（见下方联动），所以"把自己打回待审/拒绝"同样算自锁
+        or (payload.status is not None and payload.status != STATUS_ACTIVE)
     )
     if self_lockout:
-        raise HTTPException(status_code=400, detail="不能降级或禁用自己的管理员账号")
+        raise HTTPException(status_code=400, detail="不能降级、驳回或禁用自己的管理员账号")
 
     if payload.role is not None:
         target.role = payload.role
+    if payload.status is not None:
+        target.status = payload.status
+        # 审核状态与启用开关联动：通过就顺带启用，打回/拒绝就顺带停用 ——
+        # 否则会留下"已通过但没启用""被拒绝却仍能登录"这类半开状态。
+        target.is_active = payload.status == STATUS_ACTIVE
     if payload.is_active is not None:
+        # 显式给的 is_active 优先级最高（用于"已通过但先停用"这种组合）
         target.is_active = payload.is_active
     db.commit()
     return _user_row(target)
@@ -304,6 +326,10 @@ def stats(db: OrmSession = Depends(get_db)) -> dict:
     return {
         "users": db.scalar(select(func.count(User.id))),
         "active_users": db.scalar(select(func.count(User.id)).where(User.is_active)),
+        # 待审核数：管理后台首屏就能看到"有几个人在等"，不用自己去翻列表
+        "pending_users": db.scalar(
+            select(func.count(User.id)).where(User.status == STATUS_PENDING)
+        ),
         "sessions": db.scalar(select(func.count(ChatSession.id))),
         "messages": db.scalar(select(func.count(Message.id))),
         "datasets": db.scalar(select(func.count(Dataset.id))),

@@ -43,12 +43,34 @@ class TestPasswordHashing:
 
 
 class TestRegistration:
-    def test_register_returns_token_and_user(self, client):
+    def test_register_creates_a_pending_account(self, client):
+        """自助注册**不发 token**：账号先是 pending，等管理员审核（见
+        tests/test_registration_approval.py 的全链路）。
+
+        这里只钉"注册这一步本身"的契约：返回 pending 标志与用户信息，
+        且该账号此刻不可用（is_active=False）。
+        """
+        response = client.post(
+            "/api/auth/register",
+            json={"username": "alice", "email": "alice@example.com", "password": "secret123"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["pending"] is True
+        assert "token" not in body
+        assert body["user"]["username"] == "alice"
+        assert body["user"]["role"] == "user"
+        assert body["user"]["status"] == "pending"
+        assert body["user"]["is_active"] is False
+
+    def test_approved_registration_can_log_in(self, client):
+        """审核通过后，注册时设的口令即可登录（夹具封装了这条三步流程）。"""
         data = register_and_login(client, username="alice")
         assert data["token"]
         assert data["user"]["username"] == "alice"
         assert data["user"]["role"] == "user"
         assert data["user"]["is_active"] is True
+        assert data["user"]["status"] == "active"
 
     def test_duplicate_username_rejected(self, client):
         register_and_login(client, username="alice")

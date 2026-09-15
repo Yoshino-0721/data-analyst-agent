@@ -17,6 +17,22 @@ class Base(DeclarativeBase):
     pass
 
 
+# 审核状态（自助注册的闸门）。与 is_active 是**两条独立的轴**，别混：
+#   status   —— 「这个账号有没有被批准过」，只由审核动作改变，一次性的；
+#   is_active —— 「现在允不允许登录」，管理员随时可以停用 / 恢复。
+# 登录要求两者同时成立（status == active 且 is_active 为真）。
+STATUS_PENDING = "pending"
+"""已提交注册申请，等待管理员审核 —— 此时还**不能**登录。"""
+
+STATUS_ACTIVE = "active"
+"""审核通过、账号可用。存量账号与管理员建号都落在这个状态。"""
+
+STATUS_REJECTED = "rejected"
+"""审核未通过。行保留下来做审计，用户名/邮箱继续占位（同名重注册会被拒）。"""
+
+STATUS_VALUES = (STATUS_PENDING, STATUS_ACTIVE, STATUS_REJECTED)
+
+
 def _now() -> datetime:
     return datetime.now()
 
@@ -33,6 +49,12 @@ class User(Base):
     # user：只能操作自己的数据；admin：可管理全站
     role: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # 审核状态。默认 active：**存量账号与管理员建号都视为已审核**，
+    # 只有自助注册会写成 pending（见 auth.api.register）。升级既有库时由
+    # db._ADDED_COLUMNS 补这一列并填默认值，不会把老账号挡在门外。
+    status: Mapped[str] = mapped_column(
+        String(16), default=STATUS_ACTIVE, server_default=STATUS_ACTIVE
+    )
     # 自动生成初始口令的账号（例如首次启动引导出来的管理员）置 True：
     # 在改密之前，除 /api/auth/me 与改密接口外一律 403。见 deps.get_current_user。
     must_change_password: Mapped[bool] = mapped_column(

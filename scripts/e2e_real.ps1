@@ -1,4 +1,4 @@
-﻿<#
+<#
   ============================================================================
   ⚠️  真实闭环脚本 —— 只在本地手动运行，**绝不进 CI**
   ============================================================================
@@ -140,7 +140,7 @@ Write-Host "  （起点 HEAD = $head）"
 
 # ---------------- 1. 起服务（故意不设 ADMIN_PASSWORD） ----------------
 Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
-$env:ALLOW_REGISTRATION = 'true'   # 本次要验证自助注册路径；投产默认 false 不变
+$env:ALLOW_REGISTRATION = 'true'   # 自助注册现已默认开启；这里显式写出来让脚本自证
 $env:PYTHONIOENCODING = 'utf-8'
 if (Test-Path $LogOut) { Remove-Item $LogOut -Force }
 if (Test-Path $LogErr) { Remove-Item $LogErr -Force }
@@ -194,12 +194,26 @@ try {
   $ungated = Http 'GET' $ListPath $null $adminTok2
   Check "用新 token 访问业务接口 -> 200（闸门解除）" ($ungated.Status -eq 200) "HTTP $($ungated.Status)"
 
-  # ---------------- 3. 自助注册（口令随机生成，用完即弃） ----------------
+  # ---------------- 3. 自助注册 → 管理员审核 → 可登录（口令随机，用完即弃） ----------------
   $aliceName = "alice$suffix"
   $alicePwd = New-StrongPassword
   $reg = Http 'POST' '/api/auth/register' @{ username = $aliceName; email = "$aliceName@example.com"; password = $alicePwd }
-  Check "自助注册 $aliceName -> 200 + token" ($reg.Status -eq 200 -and $reg.Json.token) "HTTP $($reg.Status) $($reg.Raw)"
-  $aliceTok = $reg.Json.token
+  Check "自助注册 $aliceName -> 200 且落成待审核（不发 token）" `
+    ($reg.Status -eq 200 -and $reg.Json.pending -eq $true -and -not $reg.Json.token) "HTTP $($reg.Status) $($reg.Raw)"
+  $aliceId = 0
+  if ($reg.Json -and $reg.Json.user) { $aliceId = [int]$reg.Json.user.id }
+
+  $blocked = Http 'POST' '/api/auth/login' @{ account = $aliceName; password = $alicePwd }
+  Check "未审核时登录 -> 403 且说明在等审核" `
+    ($blocked.Status -eq 403 -and "$($blocked.Json.detail)" -match '审核') "HTTP $($blocked.Status) $($blocked.Raw)"
+
+  $approved = Http 'PATCH' "/api/admin/users/$aliceId" @{ status = 'active' } $adminTok2
+  Check "管理员审核通过 $aliceName -> 200 且已启用" `
+    ($approved.Status -eq 200 -and $approved.Json.is_active -eq $true) "HTTP $($approved.Status) $($approved.Raw)"
+
+  $aliceLogin = Http 'POST' '/api/auth/login' @{ account = $aliceName; password = $alicePwd }
+  Check "审核通过后登录 -> 200 + token" ($aliceLogin.Status -eq 200 -and $aliceLogin.Json.token) "HTTP $($aliceLogin.Status) $($aliceLogin.Raw)"
+  $aliceTok = $aliceLogin.Json.token
 
   # ---------------- 4. 管理员建号（一次性口令 → 强制改密） ----------------
   $bobName = "bob$suffix"

@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-699%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-714%20passed-brightgreen)
 
 基于 Function Calling 的本地数据分析 Agent：上传 Excel / CSV，用自然语言提问，
 模型自己写代码、放进 Docker 沙箱跑、看到报错自己改，直到算出结果并出图。
@@ -57,7 +57,8 @@ python -m uvicorn src.server:app --port 8123
 
 # 3. 打开 http://127.0.0.1:8123 → 跳到登录页
 #    管理员 admin：口令是你设的 ADMIN_PASSWORD，或启动日志横幅里的随机口令
-#    自助注册默认关闭；开通成员需设 ALLOW_REGISTRATION=true 并重启
+#    自助注册默认**已开启**：访客可以自己提交注册，但账号先是「待审核」，
+#    在管理后台「用户管理」里点「通过」之后本人才能登录
 
 # 或者不起服务，直接命令行端到端跑一次：
 python scripts/demo_agent.py
@@ -230,7 +231,7 @@ token 是 HS256 签名的 JWT（payload 含 `sub` / `username` / `role` / `exp`�
 ## 快速验证
 
 ```bash
-# 运行测试（699 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
+# 运行测试（714 项，全部用桩对象，不需要 Docker；Docker 集成测试默认跳过）
 pytest
 
 # 只跑真实容器集成测试（需要 Docker daemon 与沙箱镜像）
@@ -376,7 +377,7 @@ Docker Desktop / 虚拟化，项目当前就是 `EXECUTOR=local`）。首次上�
 | `ADMIN_USERNAME` | `admin` | 首次启动引导的管理员用户名 |
 | `ADMIN_EMAIL` | `admin@example.com` | 首次启动引导的管理员邮箱 |
 | `ADMIN_PASSWORD` | 空（随机生成） | 首次启动引导的管理员口令。**没有默认口令**：留空则生成随机强口令、启动横幅打印一次并强制首次改密；填入弱口令（<12 位 / <3 类字符 / 命中弱口令表）会**拒绝启动** |
-| `ALLOW_REGISTRATION` | `false` | 是否允许自助注册。**默认关闭**：公网部署下任何人注册成功都会消耗**站点共用**的 API Key 额度。要开通成员时临时设为 `true` 并重启，开通完改回 `false` |
+| `ALLOW_REGISTRATION` | `true` | 是否允许自助注册。**默认开启，但注册 ≠ 开号**：提交后账号是 `pending`，管理员在后台点「通过」才能登录。闸门在审核那一步，所以"开门"不会立刻消耗站点共用的 API Key 额度；要彻底关门就显式设 `false` |
 | `LOGIN_MAX_FAILURES` | `5` | 同一账号连续登录失败多少次后锁定 |
 | `LOGIN_LOCK_SECONDS` | `300` | 锁定时长（秒）。锁定期内登录返回 429 + `Retry-After` |
 | `MAX_UPLOAD_SIZE` | `52428800` | 单次上传请求的**总体积**上限（字节，默认 50 MiB）。超限返回 413；多文件共享同一份预算 |

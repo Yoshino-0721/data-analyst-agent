@@ -36,7 +36,7 @@ from src.auth.security import (
     verify_security_config,
 )
 from src.config import settings
-from tests.conftest import auth_headers
+from tests.conftest import approve_user, auth_headers
 
 STRONG = "Fresh-Admin-7z!"
 BANNER_PASSWORD_RE = re.compile(r"口\s*令：(\S+)")
@@ -203,13 +203,22 @@ class TestForcedPasswordChange:
         assert client.get("/api/admin/users", headers=admin_h).status_code == 200
 
     def test_flag_is_exposed_on_registration_and_me(self, client):
-        """`must_change_password` 必须在用户信息里，前端才有依据把用户按在改密页。"""
+        """`must_change_password` 必须在用户信息里，前端才有依据把用户按在改密页。
+
+        自助注册现在落成 pending（不发 token），所以 /me 那半段要先过审核 ——
+        这正是"注册 ≠ 开号"之后每个用例都要走的流程。
+        """
         body = client.post(
             "/api/auth/register",
             json={"username": "carol", "email": "carol@example.com", "password": "secret123"},
         ).json()
         assert body["user"]["must_change_password"] is False
-        assert client.get("/api/auth/me", headers=auth_headers(body["token"])).json()[
+
+        approve_user(body["user"]["id"])
+        login = client.post(
+            "/api/auth/login", json={"account": "carol", "password": "secret123"}
+        ).json()
+        assert client.get("/api/auth/me", headers=auth_headers(login["token"])).json()[
             "must_change_password"
         ] is False
 

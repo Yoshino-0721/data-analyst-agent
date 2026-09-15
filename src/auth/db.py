@@ -71,6 +71,9 @@ def _create_engine(path: Path):
 _ADDED_COLUMNS = (
     ("users", "must_change_password", "BOOLEAN NOT NULL DEFAULT 0"),
     ("users", "token_version", "INTEGER NOT NULL DEFAULT 0"),
+    # 自助注册的审核状态。**默认 active**：升级既有库时，老账号一律补成"已审核"，
+    # 否则一次升级就会把所有人（含管理员自己）挡在登录之外。
+    ("users", "status", "VARCHAR(16) NOT NULL DEFAULT 'active'"),
 )
 
 

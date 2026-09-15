@@ -259,7 +259,8 @@
       <label>确认密码
         <input id="regConfirm" name="confirm" type="password" autocomplete="new-password" placeholder="••••••" required>
       </label>
-      <button type="submit" class="primary" id="regBtn">注册并进入</button>
+      <button type="submit" class="primary" id="regBtn">提交注册申请</button>
+      <p class="notice" id="regNotice">注册后需管理员审核通过才能登录。</p>
     </form>
 
     <!-- 被强制改密的账号（用的是系统生成的初始口令）会看到这一屏。
@@ -283,6 +284,7 @@
     </form>
 
     <div id="error" class="error hidden" role="alert"></div>
+    <div id="notice" class="notice hidden" role="status"></div>
 
     <p class="hint">
       首次部署会引导一个管理员账号 <code>admin</code>：初始口令取 <code>ADMIN_PASSWORD</code>；
@@ -313,6 +315,14 @@ let knownCurrentPassword = null;
 
 function showError(message) {
   const box = $('error');
+  box.textContent = message || '';
+  box.classList.toggle('hidden', !message);
+  if (message) showNotice('');   // 报错与提示互斥，别同时挂两块牌子
+}
+
+/** 中性提示（例如"注册申请已提交，等审核"）。与报错分开：报错是红的，这里是强调色。 */
+function showNotice(message) {
+  const box = $('notice');
   box.textContent = message || '';
   box.classList.toggle('hidden', !message);
 }
@@ -477,22 +487,36 @@ function bindRegister() {
   $('registerForm').addEventListener('submit', async event => {
     event.preventDefault();
     showError('');
+    const username = $('regUsername').value.trim();
     const password = $('regPassword').value;
     if (password.length < 6) { showError('密码至少 6 位'); return; }
     if (password !== $('regConfirm').value) { showError('两次输入的密码不一致'); return; }
 
     const button = $('regBtn');
-    setBusy(button, true, '注册并进入');
-    knownCurrentPassword = password;
+    setBusy(button, true, '提交注册申请');
     try {
-      enter(await postJSON('/api/auth/register', {
-        username: $('regUsername').value.trim(),
+      const data = await postJSON('/api/auth/register', {
+        username: username,
         email: $('regEmail').value.trim(),
         password: password,
-      }));
+      });
+      // 服务端只回 pending，**不发 token**：账号要管理员审核通过后才能登录。
+      // 所以这里刻意不调 enter() —— 拿到 pending 还跳转的话，用户会以为注册即成功，
+      // 然后在工作台被 401 弹回来，看起来就像"注册把账号弄坏了"。
+      if (data && data.pending) {
+        $('registerForm').classList.add('hidden');
+        $('loginForm').classList.remove('hidden');
+        $('tabLogin').classList.add('active');
+        $('tabRegister').classList.remove('active');
+        $('loginAccount').value = username;   // 帮用户把账号填好，只剩等审核
+        showNotice('注册申请已提交。管理员审核通过后，用刚才的账号密码即可登录。');
+      } else {
+        enter(data);
+      }
     } catch (err) {
       showError(err.message);
-      setBusy(button, false, '注册并进入');
+    } finally {
+      setBusy(button, false, '提交注册申请');
     }
   });
 }

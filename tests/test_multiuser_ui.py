@@ -420,6 +420,30 @@ def test_admin_page_has_forced_password_change_gate():
     assert "await forcePasswordChange()" in html
 
 
+def test_login_page_does_not_auto_enter_after_registration():
+    """注册后**不能**直接进站：服务端只回 pending、不发 token。
+
+    2026-09-15 的产品决定：注册开放，但要管理员审核通过才能登录。前端若照旧
+    `enter(data)`，拿到 undefined token 也照样跳转，用户随后在工作台被弹回登录页 ——
+    看起来就像"注册把账号弄坏了"。所以这里钉住：页面会识别 pending 并给提示。
+    """
+    html = read_page("login")
+    assert "data.pending" in html
+    assert "审核" in html
+    assert "showNotice" in html
+    assert "注册并进入" not in html, "注册不再等于进站，按钮文案也不该这么说"
+
+
+def test_admin_page_has_registration_approval_actions():
+    """管理后台要能审核：待审核状态 + 通过/拒绝按钮，且走 PATCH status。"""
+    html = read_page("admin")
+    assert "待审核" in html
+    assert "data-approve-user" in html and "data-reject-user" in html
+    assert "status: 'active'" in html, "通过审核 = PATCH status=active"
+    assert "status: 'rejected'" in html, "拒绝 = PATCH status=rejected"
+    assert "'pending'" in html and "'rejected'" in html
+
+
 def test_admin_page_builds_accounts_with_one_time_password():
     """建号入口：表单 -> POST /api/admin/users，且**一次性口令必须落在页面上**。
 

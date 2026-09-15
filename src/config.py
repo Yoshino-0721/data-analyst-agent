@@ -50,6 +50,18 @@ def _read_int(name: str, default: int) -> int:
         return default
 
 
+def _read_bool(name: str, default: bool) -> bool:
+    """布尔型环境变量：只认显式的真值/假值，认不出来就用默认值。"""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 @dataclass
 class Settings:
     """一次运行所需的全部配置。"""
@@ -82,9 +94,11 @@ class Settings:
     # ⚠️ 不要为了和项目一的 `app_env` 对齐而新增同义字段 —— 两个真相来源会让
     # 「APP_ENV=production 但 local 执行器仍被放行」这类分叉静默发生。
     env: str = "dev"
-    # 是否允许自助注册。**默认关闭**：公网部署下，任何人注册成功都会消耗站点共用的
-    # API Key 额度（上传文档要 embedding、提问要 chat）。开通成员时临时设为 true。
-    allow_registration: bool = False
+    # 是否允许自助注册。**默认开启**：注册出来的账号是 pending 状态，
+    # 必须由管理员审核通过才能登录（见 auth.models.STATUS_PENDING），
+    # 所以"开门"不会立刻消耗站点共用的 API Key 额度 —— 闸门在审核那一步。
+    # 要彻底关掉自助注册，显式设 ALLOW_REGISTRATION=false。
+    allow_registration: bool = True
     # 登录节流：同一账号连续失败 N 次后锁定 M 秒（见 src/auth/throttle.py）
     login_max_failures: int = 5
     login_lock_seconds: int = 300
@@ -119,10 +133,7 @@ class Settings:
             history_keep_turns=_read_int("HISTORY_KEEP_TURNS", 4),
             executor=os.environ.get("EXECUTOR", "docker").strip() or "docker",
             env=os.environ.get("APP_ENV", "dev").strip() or "dev",
-            allow_registration=os.environ.get("ALLOW_REGISTRATION", "")
-            .strip()
-            .lower()
-            in {"1", "true", "yes", "on"},
+            allow_registration=_read_bool("ALLOW_REGISTRATION", True),
             login_max_failures=_read_int("LOGIN_MAX_FAILURES", 5),
             login_lock_seconds=_read_int("LOGIN_LOCK_SECONDS", 300),
             max_upload_size=_read_int("MAX_UPLOAD_SIZE", 52428800),

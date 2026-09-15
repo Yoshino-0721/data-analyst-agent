@@ -177,6 +177,7 @@
   }
 
   .toolbar { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; margin-bottom: var(--space-5); }
+  .check { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--fs-md); }
 
   button.primary {
     padding: var(--space-3) var(--space-5); border: 0; border-radius: var(--radius-sm);
@@ -209,6 +210,7 @@
   .badge.user { background: var(--surface-2); }
   .badge.on { background: var(--success-soft); color: var(--success); border-color: transparent; }
   .badge.off { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+  .badge.pending { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
   .badge.OK { background: var(--success-soft); color: var(--success); border-color: transparent; }
   .badge.RUNTIME_ERROR { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
   .badge.TIMEOUT, .badge.OOM { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
@@ -400,10 +402,11 @@
         </div>
         <div class="card">
           <h2>用户管理</h2>
-          <p class="hint">管理员不能降级或禁用自己的账号（服务端会拒绝）。</p>
+          <p class="hint">自助注册的账号是「待审核」状态，点「通过」之后本人才能登录；管理员不能降级、驳回或禁用自己的账号（服务端会拒绝）。</p>
           <div class="toolbar">
             <input type="search" id="userSearch" placeholder="按用户名或邮箱搜索…">
             <button class="primary" id="userSearchBtn" type="button">搜索</button>
+            <label class="check"><input type="checkbox" id="onlyPending"> 只看待审核</label>
             <button class="mini" id="userReloadBtn" type="button">刷新</button>
           </div>
           <div class="table-wrap" id="usersWrap"></div>
@@ -582,6 +585,7 @@ function closeDrawer() { $('drawerOverlay').classList.add('hidden'); }
 const STAT_LABELS = [
   ['users', '用户总数'],
   ['active_users', '启用中'],
+  ['pending_users', '待审核'],
   ['sessions', '会话总数'],
   ['messages', '消息总数'],
   ['datasets', '数据集总数'],
@@ -611,31 +615,65 @@ async function loadStats() {
 
 /* ---------------- 用户管理 ---------------- */
 
+/** 审核状态 × 启用开关 → 一个能看懂的状态。
+ *
+ * `status` 是「有没有被批准过」（一次性的），`is_active` 是「现在能不能登录」
+ * （随时可改的开关），两个维度都要看：
+ *   待审核 —— 刚自助注册，等管理员点「通过」
+ *   已启用 —— 批准过且现在可用
+ *   已停用 —— 批准过、后来被停用
+ *   未通过 —— 审核被拒（行保留做审计，用户名继续占位）
+ */
+function accountState(u) {
+  if (u.status === 'pending') return { text: '待审核', cls: 'pending' };
+  if (u.status === 'rejected') return { text: '未通过', cls: 'off' };
+  return u.is_active ? { text: '已启用', cls: 'on' } : { text: '已停用', cls: 'off' };
+}
+
+/** 一行的操作按钮。待审核 / 未通过的行给的是**审核动作**，不是启用禁用。 */
+function userActions(u) {
+  const id = escapeHtml(u.id);
+  if (u.status === 'pending') {
+    return '<button class="mini primary" data-approve-user="' + id + '">通过</button>' +
+      '<button class="mini" data-reject-user="' + id + '" data-username="' + escapeHtml(u.username) + '">拒绝</button>';
+  }
+  const parts = [
+    '<button class="mini" data-role-user="' + id + '" data-role="' + escapeHtml(u.role === 'admin' ? 'user' : 'admin') + '">' +
+      (u.role === 'admin' ? '降为用户' : '升为管理员') + '</button>',
+    '<button class="mini" data-active-user="' + id + '" data-active="' + (u.is_active ? '0' : '1') + '">' +
+      (u.is_active ? '禁用' : '启用') + '</button>',
+    '<button class="mini" data-reset-user="' + id + '" data-username="' + escapeHtml(u.username) + '">重置密码</button>',
+  ];
+  if (u.status === 'rejected') {
+    // 误拒要能翻案：不再走"启用"，而是重新走一次审核
+    parts.push('<button class="mini" data-approve-user="' + id + '">改为通过</button>');
+  }
+  return parts.join('');
+}
+
 async function loadUsers() {
   const q = $('userSearch').value.trim();
   const data = await api('/api/admin/users' + (q ? '?q=' + encodeURIComponent(q) : ''));
   const me = currentUser() || {};
+  // 「只看待审核」是纯前端过滤：审核动作要立刻能在列表里看到结果，
+  // 多打一次带状态参数的请求只会让列表闪一下。
+  const onlyPending = $('onlyPending') && $('onlyPending').checked;
+  const users = onlyPending ? data.users.filter(u => u.status === 'pending') : data.users;
 
-  $('usersWrap').innerHTML = data.users.length === 0
-    ? '<div class="empty">没有匹配的用户</div>'
+  $('usersWrap').innerHTML = users.length === 0
+    ? '<div class="empty">' + (onlyPending ? '没有待审核的注册申请' : '没有匹配的用户') + '</div>'
     : '<table><thead><tr><th>#</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead><tbody>' +
-      data.users.map(u => {
+      users.map(u => {
         const self = me.id === u.id;
-        const roleNext = u.role === 'admin' ? 'user' : 'admin';
+        const state = accountState(u);
         return '<tr>' +
           '<td class="mono">' + escapeHtml(u.id) + '</td>' +
           '<td>' + escapeHtml(u.username) + (self ? ' <span class="badge">我</span>' : '') + '</td>' +
           '<td>' + escapeHtml(u.email) + '</td>' +
           '<td><span class="badge ' + (u.role === 'admin' ? 'admin' : 'user') + '">' + escapeHtml(u.role) + '</span></td>' +
-          '<td><span class="badge ' + (u.is_active ? 'on' : 'off') + '">' + (u.is_active ? '启用' : '禁用') + '</span></td>' +
+          '<td><span class="badge ' + state.cls + '">' + state.text + '</span></td>' +
           '<td class="mono">' + escapeHtml(fmtTime(u.created_at)) + '</td>' +
-          '<td class="actions">' +
-            '<button class="mini" data-role-user="' + escapeHtml(u.id) + '" data-role="' + escapeHtml(roleNext) + '">' +
-              (u.role === 'admin' ? '降为用户' : '升为管理员') + '</button>' +
-            '<button class="mini" data-active-user="' + escapeHtml(u.id) + '" data-active="' + (u.is_active ? '0' : '1') + '">' +
-              (u.is_active ? '禁用' : '启用') + '</button>' +
-            '<button class="mini" data-reset-user="' + escapeHtml(u.id) + '" data-username="' + escapeHtml(u.username) + '">重置密码</button>' +
-          '</td></tr>';
+          '<td class="actions">' + userActions(u) + '</td></tr>';
       }).join('') + '</tbody></table>';
 }
 
@@ -645,6 +683,12 @@ async function patchUser(id, body) {
     toast('已更新');
     await loadUsers();
   } catch (err) { toast(err.message, true); }
+}
+
+/** 驳回注册申请。加二次确认 —— 驳回后对方直接登录不了，属于不可逆的对外动作。 */
+async function rejectUser(id, username) {
+  if (!confirm('驳回「' + (username || '') + '」的注册申请？该账号将无法登录。')) return;
+  await patchUser(id, { status: 'rejected' });
 }
 
 async function resetPassword(id, username) {
@@ -975,6 +1019,7 @@ function bind() {
 
   $('userSearchBtn').addEventListener('click', () => loadUsers().catch(e => toast(e.message, true)));
   $('userSearch').addEventListener('keydown', e => { if (e.key === 'Enter') $('userSearchBtn').click(); });
+  $('onlyPending').addEventListener('change', () => loadUsers().catch(e => toast(e.message, true)));
   $('userReloadBtn').addEventListener('click', () => loadUsers().catch(e => toast(e.message, true)));
   $('sessionReloadBtn').addEventListener('click', () => loadSessions().catch(e => toast(e.message, true)));
   $('datasetReloadBtn').addEventListener('click', () => loadDatasets().catch(e => toast(e.message, true)));
@@ -1008,6 +1053,8 @@ function bind() {
     else if (target.dataset.delDataset) deleteDataset(target.dataset.delDataset, target.dataset.name || '');
     else if (target.dataset.roleUser) patchUser(target.dataset.roleUser, { role: target.dataset.role });
     else if (target.dataset.activeUser) patchUser(target.dataset.activeUser, { is_active: target.dataset.active === '1' });
+    else if (target.dataset.approveUser) patchUser(target.dataset.approveUser, { status: 'active' });
+    else if (target.dataset.rejectUser) rejectUser(target.dataset.rejectUser, target.dataset.username || '');
     else if (target.dataset.resetUser) resetPassword(target.dataset.resetUser, target.dataset.username || '');
   });
 }

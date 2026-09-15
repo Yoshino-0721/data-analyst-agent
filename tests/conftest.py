@@ -122,15 +122,49 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def approve_user(user_id: int) -> None:
+    """把自助注册出来的账号置为「已审核」——等价于管理员在后台点了「通过」。
+
+    直接改库，不走 PATCH：审核端点本身由
+    ``tests/test_registration_approval.py`` 用真实接口端到端覆盖；
+    这里是给几十个既有用例提供"可直接登录的用户"的快捷方式，
+    免得每个用例都得先登一次管理员。
+    """
+    from src.auth import db as auth_db
+    from src.auth.models import STATUS_ACTIVE, User
+
+    with auth_db.get_session_factory()() as session:
+        user = session.get(User, user_id)
+        assert user is not None, f"要审核的用户 {user_id} 不存在"
+        user.status = STATUS_ACTIVE
+        user.is_active = True
+        session.commit()
+
+
 def register_and_login(client, username="alice", email=None, password="secret123") -> dict:
-    """注册并登录一个用户，返回 {token, user}。"""
-    response = client.post(
+    """注册 → 管理员审核通过 → 登录，返回 {token, user}。
+
+    自助注册出来的是 **pending**（连 token 都不发），所以这里显式补上审核这一步；
+    「注册后被挡在门外」与「审核通过后能正常用」两条路径本身由
+    ``tests/test_registration_approval.py`` 覆盖。
+    """
+    registered = client.post(
         "/api/auth/register",
         json={
             "username": username,
             "email": email or f"{username}@example.com",
             "password": password,
         },
+    )
+    assert registered.status_code == 200, registered.text
+    body = registered.json()
+    assert body.get("pending") is True, "自助注册应当落成待审核"
+    assert "token" not in body, "待审核的账号不该拿到 token"
+
+    approve_user(body["user"]["id"])
+
+    response = client.post(
+        "/api/auth/login", json={"account": username, "password": password}
     )
     assert response.status_code == 200, response.text
     return response.json()
