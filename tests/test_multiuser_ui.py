@@ -286,7 +286,9 @@ def test_index_restores_trace_from_message_meta():
     assert "renderTrace" in html
     assert "renderStep" in html
     assert "steps" in html
-    # 产物也要能从历史里恢复出来
+    # 产物也要能从历史里恢复出来 —— 且必须走带 Bearer 的取回
+    # （裸 <img src="/api/artifact/…"> 会被 401 挡下，2026-09-15 实测）
+    assert "artifactBlobUrl" in html
     assert "/api/artifact/" in html
 
 

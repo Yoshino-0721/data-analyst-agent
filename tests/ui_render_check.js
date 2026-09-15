@@ -61,13 +61,38 @@ Object.defineProperty(global, "navigator", {
   configurable: true,
   writable: true
 });
-global.fetch = async () => ({ ok: true, json: async () => ({}) });
+
+/* 登录态 + 产物取回。
+ *
+ * 产物图（`<img>`）不会自己带 Authorization 头 —— 服务端 `/api/artifact/{name}`
+ * 要 Bearer，于是每个图都是 401（2026-09-15 线上实测）。所以前端必须自己
+ * fetch 回来再转 blob: URL；这里给出 token、记录 fetch 调用、并吐真 Blob
+ * 让 `URL.createObjectURL` 在 Node 里也能真的跑。 */
+global.localStorage = {
+  getItem: k => (k === "auth_token" ? "T-UNIT" : null),
+  setItem() {},
+  removeItem() {}
+};
+const fetchCalls = [];
+global.fetch = async (url, opts) => {
+  fetchCalls.push({ url: String(url), opts: opts || {} });
+  if (String(url).includes("missing")) {
+    return { ok: false, status: 404, json: async () => ({ detail: "产物不存在" }) };
+  }
+  return {
+    ok: true,
+    status: 200,
+    blob: async () => new Blob(["fake-png-bytes"]),
+    json: async () => ({})
+  };
+};
 global.FormData = class { append() {} };
 
 let exported;
 try {
   // 把脚本包进函数作用域并取出要测的纯函数
-  exported = new Function(script + "\n;return { escapeHtml, highlightPython, renderRich, STATUS_LABEL };")();
+  exported = new Function(script + "\n;return { escapeHtml, highlightPython, renderRich, STATUS_LABEL, "
+    + "inline, authHeaders, artifactBlobUrl, releaseArtifactUrls, artifactsBlock };")();
 } catch (err) {
   console.error("FAIL: 脚本求值失败 —— " + err.message);
   process.exit(1);
@@ -131,8 +156,9 @@ check("Markdown：无序列表", listMd.includes("<ul>") && listMd.includes("<li
 
 /* ---------------- 答案里的图片 ---------------- */
 const imgMd = renderRich("柱状图如下：\n![各地区销售额](各地区销售额_4.png)");
-check("Markdown：图片渲染成产物链接",
-  imgMd.includes('src="/api/artifact/') && imgMd.includes("<img"), imgMd.slice(0, 160));
+check("Markdown：图片渲染成产物占位（真实 src 由带 Bearer 的取回填）",
+  imgMd.includes('data-artifact="各地区销售额_4.png"') && imgMd.includes("<img")
+  && !imgMd.includes("/api/artifact/"), imgMd.slice(0, 160));
 
 const imgEsc = renderRich('![<script>alert(1)</script>](x.png)');
 check("Markdown：图片 alt 被转义",
@@ -140,7 +166,7 @@ check("Markdown：图片 alt 被转义",
 
 const imgTraversal = renderRich("![x](../../../.env)");
 check("Markdown：图片路径只取文件名（穿越由服务端再拦一道）",
-  imgTraversal.includes('src="/api/artifact/.env"') && !imgTraversal.includes("../"),
+  imgTraversal.includes('data-artifact=".env"') && !imgTraversal.includes("../"),
   imgTraversal.slice(0, 120));
 
 /* ---------------- 状态徽章 ---------------- */
@@ -149,9 +175,63 @@ check("状态映射覆盖六分类",
   expected.every(s => Object.prototype.hasOwnProperty.call(STATUS_LABEL, s)),
   JSON.stringify(Object.keys(STATUS_LABEL)));
 
-console.log("");
-if (failures > 0) {
-  console.log("前端渲染断言： " + failures + " 项失败");
-  process.exit(1);
-}
-console.log("前端渲染断言全部通过");
+/* ---------------- 产物图：必须带 Bearer 取回 ---------------- */
+/* 回归 2026-09-15：`<img src="/api/artifact/x.png">` 是浏览器直连，**不带**
+ * Authorization 头，而该接口要登录态 → 每个图 401、页面上全是破图。
+ * 正确做法：走带 token 的 fetch，转成 blob: URL 再交给 <img>。 */
+(async () => {
+  const { inline, authHeaders, artifactBlobUrl, releaseArtifactUrls, artifactsBlock } = exported;
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  check("鉴权头：有 token 时带 Bearer", authHeaders().Authorization === "Bearer T-UNIT",
+    JSON.stringify(authHeaders()));
+  check("鉴权头：不覆盖调用方自己的头",
+    authHeaders({ "X-Test": "1" }).Authorization === "Bearer T-UNIT"
+    && authHeaders({ "X-Test": "1" })["X-Test"] === "1");
+
+  fetchCalls.length = 0;
+  const url = await artifactBlobUrl("图表.png");
+  check("产物图：取回后给的是 blob: URL", typeof url === "string" && url.startsWith("blob:"), String(url));
+  check("产物图：请求打在产物接口上",
+    fetchCalls.length === 1
+    && fetchCalls[0].url === "/api/artifact/" + encodeURIComponent("图表.png"),
+    JSON.stringify(fetchCalls.map(c => c.url)));
+  check("产物图：请求带上了 Authorization",
+    !!(fetchCalls[0] && fetchCalls[0].opts.headers
+       && fetchCalls[0].opts.headers.Authorization === "Bearer T-UNIT"),
+    JSON.stringify(fetchCalls[0] && fetchCalls[0].opts.headers));
+
+  const again = await artifactBlobUrl("图表.png");
+  check("产物图：同名复用，不重复下载", again === url && fetchCalls.length === 1);
+
+  const missing = await artifactBlobUrl("missing.png");
+  check("产物图：404 给 null（图不显示，但绝不塞一个必然 401 的 src）", missing === null, String(missing));
+
+  const callsBeforeRelease = fetchCalls.length;
+  releaseArtifactUrls();
+  const afterRelease = await artifactBlobUrl("图表.png");
+  check("产物图：释放后重新取（清空消息区 revoke，避免 blob 泄漏）",
+    fetchCalls.length === callsBeforeRelease + 1
+    && typeof afterRelease === "string" && afterRelease.startsWith("blob:")
+    && afterRelease !== url,
+    String(afterRelease));
+
+  fetchCalls.length = 0;
+  const box = artifactsBlock(["图表.png"]);
+  const img = box.children[0].children[0];
+  await flush();
+  check("产物列表：<img> 的 src 是 blob:（不是会 401 的 /api/artifact/…）",
+    typeof img.src === "string" && img.src.startsWith("blob:"), String(img.src));
+  check("产物列表：仍然保留文件名做 figcaption",
+    box.children[0].children[1].textContent === "图表.png");
+  check("答案里的内联图：占位标记 + 取回后填 blob",
+    inline("![图](图表.png)").includes('data-artifact="图表.png"')
+    && !inline("![图](图表.png)").includes("/api/artifact/"));
+
+  console.log("");
+  if (failures > 0) {
+    console.log("前端渲染断言： " + failures + " 项失败");
+    process.exit(1);
+  }
+  console.log("前端渲染断言全部通过");
+})();

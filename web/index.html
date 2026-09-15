@@ -554,7 +554,9 @@ function inline(text){
     .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, src) => {
       const name = String(src).split(/[\\/]/).pop();
       if(!name){ return match; }
-      return '<img class="inline-img" src="/api/artifact/' + encodeURIComponent(name)
+      // 只留占位标记，真实地址由 hydrateArtifactImages 用带 Bearer 的 fetch 填 ——
+      // 这里若让裸 img 直接指向产物接口，浏览器不带 Authorization，图必 401。
+      return '<img class="inline-img" data-artifact="' + escapeHtml(name)
         + '" alt="' + alt + '" loading="lazy">';
     })
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -633,15 +635,24 @@ function toLogin(){
  * 401 一律视为登录态失效：清 token 回登录页，绝不留在半死状态。
  * 非 2xx 抛 `Error(detail)`，调用方直接拿人话显示。
  */
-async function apiFetch(url, options){
-  const opts = options || {};
-  const headers = Object.assign({}, opts.headers || {});
+/** 鉴权头：全站**唯一**一处把 token 拼进请求的地方。
+ *
+ * 产物图也必须走它 —— 浏览器不会给 `<img src>` 带 Authorization 头，
+ * 详见下面 `artifactBlobUrl` 的说明。
+ */
+function authHeaders(extra){
+  const headers = Object.assign({}, extra || {});
   const current = token();
   if(current){ headers.Authorization = "Bearer " + current; }
+  return headers;
+}
+
+async function apiFetch(url, options){
+  const opts = options || {};
 
   const resp = await fetch(url, {
     method: opts.method || "GET",
-    headers: headers,
+    headers: authHeaders(opts.headers),
     body: opts.body === undefined ? undefined : opts.body
   });
 
@@ -671,6 +682,74 @@ function fmtTime(value){
   return String(value).replace("T", " ").slice(0, 16);
 }
 
+/* ---------------- 产物图：必须带 Bearer 取回 ----------------
+ *
+ * `/api/artifact/{name}` 与其它接口一样要登录态，而浏览器**不会**给
+ * `<img src>` 带上 Authorization 头 —— 直接写 src 的结果是每个图都 401
+ * （2026-09-15 线上实测：`GET /api/artifact/xxx.png 401`，页面上一片破图，
+ * 接口本身与图片文件都没问题）。所以图也走 fetch：
+ * 取回 Blob → `URL.createObjectURL` → 再交给 `<img>`。
+ *
+ * 三个细节：
+ * 1. **同名复用**：同一张图会在答案正文与执行轨迹里各渲染一次，不能下两遍；
+ * 2. **可释放**：blob URL 不会自己回收，清空/切换消息区时要 revoke；
+ * 3. **失败不塞坏 src**：取不到就留在占位态（alt 里有文件名），
+ *    绝不放一个必然 401 的地址让浏览器自己重试。
+ */
+const _artifactUrls = new Map();
+
+function artifactBlobUrl(name){
+  let pending = _artifactUrls.get(name);
+  if(!pending){
+    pending = (async () => {
+      const resp = await fetch("/api/artifact/" + encodeURIComponent(name),
+        { headers: authHeaders() });
+      if(resp.status === 401){ toLogin(); return null; }
+      if(!resp.ok){ return null; }
+      return URL.createObjectURL(await resp.blob());
+    })().catch(() => null);
+    _artifactUrls.set(name, pending);
+  }
+  return pending;
+}
+
+/** 释放本页占用的 blob URL（清空/切换消息区时调用，避免内存只增不减）。 */
+function releaseArtifactUrls(){
+  _artifactUrls.forEach(pending => {
+    Promise.resolve(pending).then(url => { if(url){ URL.revokeObjectURL(url); } });
+  });
+  _artifactUrls.clear();
+}
+
+/** 把一个占位 `<img>` 挂上真实图片。 */
+function mountArtifact(img, name){
+  artifactBlobUrl(name).then(url => {
+    if(url){
+      img.src = url;
+    }else{
+      img.classList.add("img-failed");
+      img.title = "图片加载失败：" + name;
+    }
+  });
+  return img;
+}
+
+/** 把已插入 DOM 的 `data-artifact` 占位图逐个挂上（答案正文是 innerHTML 拼的）。 */
+function hydrateArtifactImages(root){
+  if(!root || !root.querySelectorAll){ return; }
+  root.querySelectorAll("img[data-artifact]").forEach(img => {
+    const name = img.dataset.artifact;
+    delete img.dataset.artifact;   // 只挂一次
+    if(name){ mountArtifact(img, name); }
+  });
+}
+
+/** 清空消息区：连同产物图的 blob URL 一起释放。 */
+function clearMessages(){
+  el.messages.innerHTML = "";
+  releaseArtifactUrls();
+}
+
 /* ============================ 渲染 ============================ */
 
 function scrollChat(){ el.chat.scrollTop = el.chat.scrollHeight; }
@@ -684,6 +763,7 @@ function addMessage(role, html){
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.innerHTML = html;
+  hydrateArtifactImages(bubble);   // 正文里的 ![](图.png) 走带 token 的取回
   wrap.appendChild(who);
   wrap.appendChild(bubble);
   el.messages.appendChild(wrap);
@@ -742,14 +822,15 @@ function block(label, contentHtml, extraButton){
   return wrap;
 }
 
-/** 产物图：`/api/artifact/<name>`（名字来自服务端，服务端还会再做一次路径校验）。 */
+/** 产物图：走带 Bearer 的取回，再把 blob URL 交给 `<img>`（见 `artifactBlobUrl`）。
+ *  名字来自服务端，服务端还会再做一次路径校验。 */
 function artifactsBlock(names){
   const box = document.createElement("div");
   box.className = "artifacts";
   names.forEach(name => {
     const figure = document.createElement("figure");
     const img = document.createElement("img");
-    img.src = "/api/artifact/" + encodeURIComponent(name);
+    mountArtifact(img, name);   // 别让 img 直接指向产物接口：那会 401（缺 Bearer）
     img.alt = name;
     img.loading = "lazy";
     const caption = document.createElement("figcaption");
@@ -901,7 +982,7 @@ async function refreshSessions(){
 
 function newSession(){
   state.sessionId = null;   // 下一条提问由后端开新会话，前端不再自己造 id
-  el.messages.innerHTML = "";
+  clearMessages();
   clearTrace();
   renderSessions();
   el.question.focus();
@@ -917,7 +998,7 @@ async function switchSession(sessionId){
   try{
     const data = await apiFetch("/api/sessions/" + sessionId + "/messages");
     state.sessionId = sessionId;
-    el.messages.innerHTML = "";
+    clearMessages();
     clearTrace();
 
     (data.messages || []).forEach(message => {
@@ -1163,7 +1244,7 @@ function bindEvents(){
       await apiFetch("/api/reset", {method: "POST"});
       state.files = [];
       renderDatasets();
-      el.messages.innerHTML = "";
+      clearMessages();
       clearTrace();
       setBusy(false);
     }catch(err){ /* 清空失败不阻塞使用 */ }

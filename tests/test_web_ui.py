@@ -192,9 +192,16 @@ class TestCodeTransparency:
         assert "navigator.clipboard.writeText" in html
 
     def test_artifacts_render_as_images(self, html):
-        """先跑通最简单的 img 方案，不被 UI 细节卡住。"""
-        assert "/api/artifact/" in html
+        """产物渲染成图片 —— 但**不能**用裸 `<img src="/api/artifact/…">`。
+
+        该接口要 Bearer，而浏览器不会给 `<img>` 带 Authorization 头：
+        2026-09-15 实测每个图都是 401（`GET /api/artifact/xxx.png → 401`）。
+        所以必须走带 token 的 fetch → blob URL（见 `artifactBlobUrl`）。
+        """
         assert "createElement(\"img\")" in html or "createElement('img')" in html
+        assert "artifactBlobUrl" in html and "URL.createObjectURL" in html
+        assert 'src="/api/artifact/' not in html, "裸 img src 会 401，必须走 fetch"
+        assert 'src = "/api/artifact/' not in html, "裸 img src 会 401，必须走 fetch"
 
 
 # ------------------------------------------------------------------ Node 断言
