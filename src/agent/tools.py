@@ -37,6 +37,37 @@ LOCAL_MODE_HINT = (
     "本机模式下那会扫到整个磁盘，既慢又会撞上执行超时。"
 )
 
+# ---------------------------------------------------------------- 字体兜底
+#
+# 为什么光靠「说明书里写一条」不够：2026-09-15 实测，模型在系统提示与工具说明书中
+# 都看到了「YaHei 排最前」的建议，仍然照抄自己上一轮的 `['SimHei', ...]`，
+# 于是 `HUNKEMÖLLER` 的 Ö 真的渲染成了方块（探针复现：SimHei 在前必报
+# `Glyph 214 missing`；YaHei 在前只剩 emoji 一条）。
+# 按本项目自己的经验（§2.7 第 4 条）：**约束挂在回填消息末尾才有效** ——
+# 所以这里改成「从真实 stderr 里看见缺字形，再回一条末尾提示」。
+
+FONT_GLYPH_MARKERS = ("missing from font(s)", "Failed to find font weight bold")
+"""matplotlib 缺字形 / 缺粗体字重时会打的告警。**用结果当证据**，
+而不是去正则匹配模型的写法 —— 不管它是设 rcParams 还是给单个 Text 传 fontproperties。"""
+
+LOCAL_FONT_HINT = (
+    "字体：把 `font.sans-serif` 设成 `['Microsoft YaHei', 'SimHei', 'DejaVu Sans']` —— "
+    "**YaHei 必须在最前**（本机 SimHei 没有粗体字重、也缺 Ö 这类字符，会显示成方块）；"
+    "另外图里**不要**放 emoji（本机没有 emoji 字体，同样是方块）。"
+)
+CONTAINER_FONT_HINT = (
+    "字体：**不要**自己设 `font.sans-serif` —— 镜像的 matplotlibrc 已经配好中文字体"
+    "（Noto Sans CJK），自己写会把默认值顶掉、中文反而变方块。"
+)
+
+
+def font_glyph_hint(stderr: str, *, local: bool) -> str:
+    """本次执行真的缺字形时，给一条挂末尾的字体提示；否则返回空串（不打扰）。"""
+    if not stderr or not any(marker in stderr for marker in FONT_GLYPH_MARKERS):
+        return ""
+    return LOCAL_FONT_HINT if local else CONTAINER_FONT_HINT
+
+
 
 # ------------------------------------------------------------------ 说明书
 
@@ -64,17 +95,15 @@ def build_tool_schemas(*, local: bool = False) -> list[dict[str, Any]]:
         else "2. 工作目录就是 /out —— 直接用相对路径写文件"
         "（如 plt.savefig('chart.png')），只有 /out 可写；\n"
     )
-    # 字体：容器镜像已经把 matplotlibrc 改成 Noto Sans CJK，本机则什么都没有。
-    # 模型最常见的自杀式写法是硬编码 `['SimHei', ...]` ——
-    #   容器里：SimHei / 微软雅黑都不存在，这一行会把镜像配好的默认值**顶掉**，
-    #           matplotlib 退回 DejaVu Sans，中文全变方块；
-    #   本机：SimHei 没有粗体字重、也缺 Ö 这类拉丁扩展字符（2026-09-15 实测
-    #         `findfont: Failed to find font weight bold for SimHei` + 豆腐块）。
+    # 第 6 条同样随模式变化（§2.5 记的第二处语义差异）：容器镜像改好了
+    # matplotlibrc，本机什么都没有。措辞之外还有一道运行时兜底 ——
+    # 真缺字形时由 `font_glyph_hint()` 把提示挂在回填消息末尾（见下方说明）。
     font_rule = (
-        "画图要显示中文时，把字体设成 `['Microsoft YaHei', 'SimHei', 'DejaVu Sans']`"
-        " —— YaHei **必须排最前**：它有粗体字重，也覆盖 Ö 这类字符。\n"
+        "6. 画图要用中文字体时，把 font.sans-serif 设成 "
+        "['Microsoft YaHei', 'SimHei', 'DejaVu Sans'] —— **YaHei 必须在最前**"
+        "（SimHei 没有粗体字重、也缺 Ö 这类字符）；图里**不要**放 emoji（本机没有 emoji 字体）。\n"
         if local
-        else "画图**不要**自己设 font.sans-serif：镜像里的 matplotlibrc 已经配好中文字体"
+        else "6. 画图**不要**自己设 font.sans-serif：镜像里的 matplotlibrc 已经配好中文字体"
         "（Noto Sans CJK）；容器里没有 SimHei 这类 Windows 字体，写了会顶掉默认值、"
         "中文反而变方块。\n"
     )
@@ -87,7 +116,7 @@ def build_tool_schemas(*, local: bool = False) -> list[dict[str, Any]]:
         + "3. 用 print() 输出关键结论，只有 stdout 会回传给你；\n"
         "4. 不要用 subprocess / socket / requests / os.system，也不要读写数据文件与工作目录之外的路径；\n"
         "5. 中文输出正常，无需额外设置编码。\n"
-        "图表提示：" + font_rule.rstrip("\n")
+        + font_rule.rstrip("\n")
     )
     if local:
         run_python_description += LOCAL_MODE_HINT
@@ -256,17 +285,29 @@ class ToolRuntime:
 
         result: ExecutionResult = self.executor.execute(request)
         payload = result.to_tool_payload()
+        stderr_text = str(payload.get("stderr") or "")
+
+        # 提示**顺序刻意**：执行层给的（列名/超时那类）在前，字体兜底在后 ——
+        # `_render_payload` 会把 hint 摆在整条消息的最后，最后读到的最影响下一段代码。
+        hint = "\n".join(
+            part
+            for part in (
+                str(payload.get("hint") or "").strip(),
+                font_glyph_hint(stderr_text, local=self.local_executor),
+            )
+            if part
+        )
 
         return ToolOutcome(
-            text=_render_payload(payload),
+            text=_render_payload({**payload, "hint": hint}),
             status=str(result.status.value),
             fingerprint=failure_fingerprint(payload),
             # 注意键名是 artifacts（与 ExecutionResult.to_tool_payload 对齐），
             # 值已经过净化，只有文件名、不含宿主路径。
             artifacts=tuple(payload.get("artifacts") or ()),
             stdout=str(payload.get("stdout") or ""),
-            stderr=str(payload.get("stderr") or ""),
-            hint=str(payload.get("hint") or ""),
+            stderr=stderr_text,
+            hint=hint,
         )
 
     # ---- get_schema ----
@@ -361,11 +402,15 @@ def _fmt(value: Any) -> str:
 
 
 __all__ = [
+    "CONTAINER_FONT_HINT",
+    "FONT_GLYPH_MARKERS",
     "GET_SCHEMA",
+    "LOCAL_FONT_HINT",
     "LOCAL_MODE_HINT",
     "RUN_PYTHON",
     "ToolOutcome",
     "ToolRuntime",
     "build_tool_schemas",
     "failure_fingerprint",
+    "font_glyph_hint",
 ]

@@ -30,13 +30,19 @@ from pathlib import Path
 import pytest
 
 from src.agent.prompt import build_system_prompt
-from src.agent.tools import RUN_PYTHON, ToolRuntime, build_tool_schemas
+from src.agent.tools import RUN_PYTHON, ToolRuntime, build_tool_schemas, font_glyph_hint
 from src.config import settings
 from src.schema.extractor import extract_schema, mount_root_for_executor
 from tests.conftest import upload_csv
-from tests.conftest_agent import StubExecutor
+from tests.conftest_agent import StubExecutor, error_result, ok_result
 
 CSV = "地区,销售额\n华东,100\n华南,200\n"
+
+
+def _call(name: str, arguments: str):
+    from src.llm.client import ToolCall
+
+    return ToolCall(id="call_1", name=name, arguments=arguments)
 
 
 @pytest.fixture
@@ -174,6 +180,89 @@ class TestChartFontHint:
     def test_both_modes_still_mention_matplotlib(self):
         for local in (True, False):
             assert "matplotlib" in _run_python_description(local=local)
+
+    def test_font_rule_is_a_numbered_rule_not_a_footnote(self):
+        """升格成规则 6：之前挂在末尾的「图表提示」被模型整段跳过过。"""
+        for local in (True, False):
+            assert "\n6. " in _run_python_description(local=local)
+
+
+# ------------------------------------------------- 字体：运行时兜底（真缺字形才提示）
+
+
+MPL_WARNING = (
+    "work\\script.py:157: UserWarning: Glyph 214 (\\N{LATIN CAPITAL LETTER O WITH DIAERESIS}) "
+    "missing from font(s) SimHei.\n"
+    "findfont: Failed to find font weight bold for SimHei, now using 400.\n"
+)
+
+
+class TestFontGlyphHint:
+    """说明书里写一条不够 —— 模型会照抄自己上一轮的写法（实测）。
+
+    所以再从**执行结果的 stderr** 里取证据：matplotlib 真报了缺字形/缺粗体字重，
+    就往回填消息末尾挂一条提示。用结果当判据，不猜模型的写法。
+    """
+
+    def test_no_warning_no_hint(self):
+        assert font_glyph_hint("", local=True) == ""
+        assert font_glyph_hint("普通输出，无字体问题\n", local=True) == ""
+
+    def test_local_warning_gets_yahei_first_hint(self):
+        hint = font_glyph_hint(MPL_WARNING, local=True)
+        assert "Microsoft YaHei" in hint
+        assert hint.index("Microsoft YaHei") < hint.index("SimHei")
+
+    def test_container_warning_gets_dont_override_hint(self):
+        hint = font_glyph_hint(MPL_WARNING, local=False)
+        assert "matplotlibrc" in hint
+        assert "Microsoft YaHei" not in hint
+
+    def test_runtime_appends_hint_when_glyphs_missing(self, tmp_path, sales_csv):
+        """端到端：执行结果带 matplotlib 告警 -> 回填文本**以这条提示结尾**。"""
+        schema = extract_schema(sales_csv, mount_root="")
+        executor = StubExecutor([ok_result(stdout="chart saved",
+                                           artifacts=(tmp_path / "chart.png",),
+                                           stderr=MPL_WARNING)])
+        executor.is_local = True
+        runtime = ToolRuntime(
+            executor=executor,
+            schemas=[schema],
+            data_files=[sales_csv],
+            run_dir_factory=lambda: tmp_path / "run_x",
+        )
+        outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
+        assert "Microsoft YaHei" in outcome.hint
+        assert outcome.text.rstrip().endswith(outcome.hint.strip()), \
+            "hint 必须在回填消息的最后（§2.7 第 4 条：最后读到的最影响下一段代码）"
+
+    def test_runtime_keeps_engine_hint_and_puts_font_hint_last(self, tmp_path, sales_csv):
+        """执行层自己的 hint（列名/超时那类）不能被顶掉，字体提示追在其后。"""
+        schema = extract_schema(sales_csv, mount_root="")
+        executor = StubExecutor([error_result(stderr=MPL_WARNING, hint="先用 get_schema 确认列名")])
+        executor.is_local = True
+        runtime = ToolRuntime(
+            executor=executor,
+            schemas=[schema],
+            data_files=[sales_csv],
+            run_dir_factory=lambda: tmp_path / "run_y",
+        )
+        outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
+        assert "先用 get_schema 确认列名" in outcome.hint
+        assert outcome.hint.index("先用 get_schema") < outcome.hint.index("Microsoft YaHei")
+
+    def test_docker_runtime_gets_container_hint(self, tmp_path, sales_csv):
+        schema = extract_schema(sales_csv)  # 容器模式：/data/销售.csv
+        executor = StubExecutor([ok_result(stdout="x", stderr=MPL_WARNING)])
+        runtime = ToolRuntime(
+            executor=executor,
+            schemas=[schema],
+            data_files=[sales_csv],
+            run_dir_factory=lambda: tmp_path / "run_z",
+        )
+        outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
+        assert "matplotlibrc" in outcome.hint
+        assert "Microsoft YaHei" not in outcome.hint
 
 
 # --------------------------------------------------------------- 会话提示串

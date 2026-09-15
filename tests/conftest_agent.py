@@ -71,11 +71,11 @@ class StubExecutor:
         return True, ""
 
 
-def ok_result(stdout: str = "答案：42", artifacts: tuple = ()) -> ExecutionResult:
+def ok_result(stdout: str = "答案：42", artifacts: tuple = (), stderr: str = "") -> ExecutionResult:
     return ExecutionResult(
         status=ExecStatus.OK,
         stdout=stdout,
-        stderr="",
+        stderr=stderr,
         artifacts=artifacts,
         exit_code=0,
         duration_ms=10,
