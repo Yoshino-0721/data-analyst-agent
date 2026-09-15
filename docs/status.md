@@ -6,15 +6,16 @@
 ## 0. 一句话现状
 
 两个仓库都已完成「多用户团队平台改造 + 设计令牌 pass 1 与 pass 2 + E2E 真实闭环 +
-T5/R4/T1/R3/T2/T7/R2 七条最小修复」，测试全绿，工作区干净，**从未 push**。
-剩下的是 `docs/optimization-backlog.md` 里的其余条目（T3/T4/T6/T8、R1/R5、U1–U4、N1）；
+T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现的三处缺陷（见落地记录末行）」，
+测试全绿，工作区干净，**从未 push**；整仓 bundle 备份已放在 `D:\代码项目\_backup\`。
+剩下的是 `docs/optimization-backlog.md` 里的其余条目（T3/T4/T6/T8、R1/R5、U1–U4、N1、N2）；
 **模块 13（工作区迁移）已决定取消、不执行**（2026-09-14，理由见下方表格后的说明）。
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `4934b93` | `master` `bb571de` |
-| 测试 | **471 通过** | **661 通过**（17 deselected，Docker 集成默认跳过） |
-| 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**，`refs/remotes` 为空 | 无 remote |
+| 分支 / HEAD | `main` `23f45b1` | `master` `efe7957` |
+| 测试 | **471 通过** | **690 通过**（17 deselected，Docker 集成默认跳过） |
+| 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**；Q1（远端是否已有内容）等网络恢复后 `git ls-remote --heads origin` 核实：空则推、有内容则停下来给用户看 | remote 待加：`https://github.com/Yoshino-0721/data-analyst-agent.git`（用户建好空仓库后执行 `git remote add`）。**两仓库一律不用 `--force`** |
 | 端口 | 8000 | 8123 |
 
 > ⚠️ `.git` 是历史孤本。任何迁移/清理前先 `git bundle create --all`（见
@@ -101,7 +102,8 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复」，测试全绿，工作区干净，**
    若不认可，用户会指出是"间距"还是"字号"哪一类 —— **只回退那一类**即可。
 
 2. **模块 12 剩余条目**：`docs/optimization-backlog.md` 里 **T3/T4/T6/T8、R1/R5、
-   U1–U4、N1** 还没做（T2/T5/T7/R2/R3/R4 已完成，逐条证据见该文件的「落地记录」）。
+   U1–U4、N1、N2** 还没做（T2/T5/T7/R2/R3/R4 已完成，逐条证据见该文件的「落地记录」；
+   N2「hint 细化分类」**已明确不做**，只留作可选）。
    **下一批候选：U2 → U4**（用户已点名，非必须；模块 13 取消后已无前置）。
 3. 🚫 **模块 13（工作区迁移）—— 已取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
    风险是 `.git` 历史孤本（两个仓库**从未 push**；当时本机网络不可达，`git ls-remote`
