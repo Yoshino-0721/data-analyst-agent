@@ -68,6 +68,29 @@ def font_glyph_hint(stderr: str, *, local: bool) -> str:
     return LOCAL_FONT_HINT if local else CONTAINER_FONT_HINT
 
 
+# ---------------------------------------------------------------- 布局兜底
+#
+# 与字体同一条思路：从 stderr 里取证据。这次是 matplotlib 的一句警告 ——
+# 模型既用 `fig.add_axes([...])` 手工摆 KPI 卡片、又调 `plt.tight_layout()`，
+# 后者管不到手工定位的 Axes，于是**每张图**都带一句
+# `This figure includes Axes that are not compatible with tight_layout`。
+# 它不影响数值，但布局确实可能不准，而且让"警告"和"报错"混在一起。
+TIGHT_LAYOUT_MARKER = "not compatible with tight_layout"
+
+LAYOUT_HINT = (
+    "布局：这张图用了 `fig.add_axes([...])` 手工定位，就**不要**再调 `plt.tight_layout()` —— "
+    "它管不到手工定位的 Axes（matplotlib 因此警告 results might be incorrect）。"
+    "改用 `fig.subplots_adjust(top=…, bottom=…)` 自己留白即可。"
+)
+
+
+def layout_hint(stderr: str) -> str:
+    """matplotlib 抱怨 tight_layout 与手工定位的 Axes 冲突时，回一条布局提示。"""
+    if not stderr or TIGHT_LAYOUT_MARKER not in stderr:
+        return ""
+    return LAYOUT_HINT
+
+
 
 # ------------------------------------------------------------------ 说明书
 
@@ -287,13 +310,14 @@ class ToolRuntime:
         payload = result.to_tool_payload()
         stderr_text = str(payload.get("stderr") or "")
 
-        # 提示**顺序刻意**：执行层给的（列名/超时那类）在前，字体兜底在后 ——
+        # 提示**顺序刻意**：执行层给的（列名/超时那类）在前，字体与布局兜底在后 ——
         # `_render_payload` 会把 hint 摆在整条消息的最后，最后读到的最影响下一段代码。
         hint = "\n".join(
             part
             for part in (
                 str(payload.get("hint") or "").strip(),
                 font_glyph_hint(stderr_text, local=self.local_executor),
+                layout_hint(stderr_text),
             )
             if part
         )
@@ -405,12 +429,15 @@ __all__ = [
     "CONTAINER_FONT_HINT",
     "FONT_GLYPH_MARKERS",
     "GET_SCHEMA",
+    "LAYOUT_HINT",
     "LOCAL_FONT_HINT",
     "LOCAL_MODE_HINT",
     "RUN_PYTHON",
+    "TIGHT_LAYOUT_MARKER",
     "ToolOutcome",
     "ToolRuntime",
     "build_tool_schemas",
     "failure_fingerprint",
     "font_glyph_hint",
+    "layout_hint",
 ]

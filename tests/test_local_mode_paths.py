@@ -30,7 +30,13 @@ from pathlib import Path
 import pytest
 
 from src.agent.prompt import build_system_prompt
-from src.agent.tools import RUN_PYTHON, ToolRuntime, build_tool_schemas, font_glyph_hint
+from src.agent.tools import (
+    RUN_PYTHON,
+    ToolRuntime,
+    build_tool_schemas,
+    font_glyph_hint,
+    layout_hint,
+)
 from src.config import settings
 from src.schema.extractor import extract_schema, mount_root_for_executor
 from tests.conftest import upload_csv
@@ -263,6 +269,62 @@ class TestFontGlyphHint:
         outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
         assert "matplotlibrc" in outcome.hint
         assert "Microsoft YaHei" not in outcome.hint
+
+
+# ------------------------------------------------- 布局：tight_layout 与手工定位的冲突
+
+
+LAYOUT_WARNING = (
+    "work\\script.py:164: UserWarning: This figure includes Axes that are not compatible "
+    "with tight_layout, so results might be incorrect.\n"
+    "  plt.tight_layout(rect=[0, 0, 1, 0.95])\n"
+)
+
+
+class TestLayoutHint:
+    """模型既用 `fig.add_axes([...])` 手工摆 KPI 卡片、又调 `plt.tight_layout()`。
+
+    2026-09-15 实测：连续两次成功的分析里，**每张图**都带这句警告 —— 数值和出图都正常，
+    但它让"警告"和"报错"混在一起（用户连着三次把它当成缺陷来问）。
+    与字体同一条思路：从 stderr 取证据，挂回填消息末尾。
+    """
+
+    def test_no_warning_no_hint(self):
+        assert layout_hint("") == ""
+        assert layout_hint("普通输出，无布局问题\n") == ""
+
+    def test_tight_layout_warning_gets_hint(self):
+        hint = layout_hint(LAYOUT_WARNING)
+        assert "tight_layout" in hint and "add_axes" in hint
+
+    def test_runtime_appends_layout_hint(self, tmp_path, sales_csv):
+        schema = extract_schema(sales_csv, mount_root="")
+        executor = StubExecutor([ok_result(stdout="chart saved", stderr=LAYOUT_WARNING)])
+        executor.is_local = True
+        runtime = ToolRuntime(
+            executor=executor,
+            schemas=[schema],
+            data_files=[sales_csv],
+            run_dir_factory=lambda: tmp_path / "run_l",
+        )
+        outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
+        assert "tight_layout" in outcome.hint
+        assert outcome.text.rstrip().endswith(outcome.hint.strip())
+
+    def test_both_warnings_produce_both_hints_in_order(self, tmp_path, sales_csv):
+        """字体与布局同时命中时，两条都要在，且顺序稳定（字体在前、布局在后）。"""
+        schema = extract_schema(sales_csv, mount_root="")
+        executor = StubExecutor([ok_result(stdout="x", stderr=MPL_WARNING + LAYOUT_WARNING)])
+        executor.is_local = True
+        runtime = ToolRuntime(
+            executor=executor,
+            schemas=[schema],
+            data_files=[sales_csv],
+            run_dir_factory=lambda: tmp_path / "run_b",
+        )
+        outcome = runtime.execute(_call(RUN_PYTHON, '{"code": "print(1)"}'))
+        assert "Microsoft YaHei" in outcome.hint and "tight_layout" in outcome.hint
+        assert outcome.hint.index("Microsoft YaHei") < outcome.hint.index("tight_layout")
 
 
 # --------------------------------------------------------------- 会话提示串
