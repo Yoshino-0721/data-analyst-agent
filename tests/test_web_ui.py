@@ -154,7 +154,14 @@ class TestStatusPresentation:
         assert "hintbar" in html
 
     def test_stderr_panel_exists(self, html):
+        # 真报错：保留 traceback 标签 + 红色样式
         assert "清洗后的 traceback" in html
+        assert "pre.log.err" in html
+        # 警告不能冒充报错：OK 的步骤只带 UserWarning 时，标签与配色都要换一套
+        # （2026-09-15：一张正常的图因为一句 matplotlib UserWarning 被标成
+        #  「清洗后的 traceback」+ 红色，连着三次被当成缺陷来排查）
+        assert "警告，不是报错" in html
+        assert "pre.log.warn" in html
 
 
 # ------------------------------------------------------------------ 转义

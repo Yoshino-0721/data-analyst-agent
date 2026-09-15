@@ -92,10 +92,19 @@ let exported;
 try {
   // 把脚本包进函数作用域并取出要测的纯函数
   exported = new Function(script + "\n;return { escapeHtml, highlightPython, renderRich, STATUS_LABEL, "
-    + "inline, authHeaders, artifactBlobUrl, releaseArtifactUrls, artifactsBlock };")();
+    + "inline, authHeaders, artifactBlobUrl, releaseArtifactUrls, artifactsBlock, "
+    + "stderrLooksLikeError, renderStep };")();
 } catch (err) {
   console.error("FAIL: 脚本求值失败 —— " + err.message);
   process.exit(1);
+}
+
+/** 把一个（stub）DOM 子树里的所有 innerHTML / textContent 拼起来，便于断言渲染结果。 */
+function treeText(node) {
+  if (!node) { return ""; }
+  let out = (node.innerHTML || "") + (node.textContent || "");
+  (node.children || []).forEach(child => { out += treeText(child); });
+  return out;
 }
 
 const { escapeHtml, highlightPython, renderRich, STATUS_LABEL } = exported;
@@ -234,4 +243,42 @@ check("状态映射覆盖六分类",
     process.exit(1);
   }
   console.log("前端渲染断言全部通过");
+})();
+
+/* ---------------- 警告与报错必须分开显示 ---------------- */
+/* 回归 2026-09-15：模型画的图只剩一句 matplotlib UserWarning（tight_layout 管不到
+ * 手工定位的 Axes），数值与出图都正常，而旧 UI 把它标成「清洗后的 traceback」+
+ * 红色错误样式 —— 连续三次被当成"又报错了"来排查。判据用内容 + 状态，不看有没有 stderr。 */
+(() => {
+  const { stderrLooksLikeError, renderStep } = exported;
+  const WARN = "work\\script.py:164: UserWarning: This figure includes Axes that are not "
+    + "compatible with tight_layout, so results might be incorrect.";
+  const TRACE = "Traceback (most recent call last):\n  File \"script.py\", line 3\nKeyError: 地区";
+
+  check("判据：OK + 只有警告 -> 不算报错", stderrLooksLikeError({ status: "OK", stderr: WARN }) === false);
+  check("判据：OK + traceback -> 算报错", stderrLooksLikeError({ status: "OK", stderr: TRACE }) === true);
+  check("判据：失败态一律算报错（哪怕 stderr 是空的）",
+    stderrLooksLikeError({ status: "TIMEOUT", stderr: "" }) === true
+    && stderrLooksLikeError({ status: "RUNTIME_ERROR", stderr: WARN }) === true);
+  check("判据：工具调用（status=None、无 stderr）不算报错",
+    stderrLooksLikeError({ status: null, stderr: "" }) === false);
+
+  const warnText = treeText(renderStep({
+    index: 0,
+    calls: [{ name: "run_python", code: "print(1)", file_name: "" }],
+    outcomes: [{ status: "OK", stdout: "done", stderr: WARN, hint: "", artifacts: [] }]
+  }));
+  check("渲染：警告走「警告，不是报错」标签", warnText.includes("警告，不是报错"), warnText.slice(0, 200));
+  check("渲染：警告不套 traceback 标签", !warnText.includes("清洗后的 traceback"));
+  check("渲染：警告用 warn 配色（不再用 err 红色）",
+    warnText.includes("log warn") && !warnText.includes("log err"));
+
+  const errText = treeText(renderStep({
+    index: 1,
+    calls: [{ name: "run_python", code: "print(1)", file_name: "" }],
+    outcomes: [{ status: "RUNTIME_ERROR", stdout: "", stderr: TRACE, hint: "先看列名", artifacts: [] }]
+  }));
+  check("渲染：真报错仍走 traceback 标签 + err 配色",
+    errText.includes("清洗后的 traceback") && errText.includes("log err")
+    && !errText.includes("警告，不是报错"), errText.slice(0, 200));
 })();

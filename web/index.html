@@ -290,6 +290,7 @@ pre.log{
   max-height:300px;overflow:auto;color:var(--text);
 }
 pre.log.err{background:var(--danger-soft);color:var(--danger-text)}
+pre.log.warn{background:var(--warn-soft);color:var(--warn-text)}
 pre.log.closed{display:none}
 .hintbar{
   display:flex;gap:var(--space-3);align-items:flex-start;padding:var(--space-4) var(--space-5);
@@ -464,6 +465,22 @@ const STATUS_LABEL = {
   REJECTED: "REJECTED 预检拒绝",
   SANDBOX_ERROR: "SANDBOX_ERROR 沙箱异常"
 };
+
+/** stderr 是「真报错」还是「只是警告」。
+ *
+ * 判据是**内容 + 状态**，不是"有没有 stderr"：
+ *   1. 步骤失败（status 存在且不是 OK）→ 一律按报错显示，不会被这条规则洗白；
+ *   2. 成功但有 stderr → 只有含 traceback 才算报错，否则是警告。
+ *
+ * 为什么需要它：2026-09-15 实测，模型画的图只剩一句 matplotlib UserWarning
+ * （`tight_layout` 管不到手工定位的 Axes），数值和出图完全正常，
+ * 而旧 UI 把它标成「stderr（清洗后的 traceback）」+ 红色错误样式 ——
+ * 于是每张图看起来都像"又报错了"，连续三次被当成缺陷来排查。
+ */
+function stderrLooksLikeError(outcome){
+  if(outcome.status && outcome.status !== "OK"){ return true; }
+  return /Traceback \(most recent call last\)/.test(outcome.stderr || "");
+}
 
 /* Python 极简语法高亮。
    刻意不用 highlight.js —— 引一个 CDN 脚本意味着页面不再自包含，
@@ -892,8 +909,12 @@ function renderStep(step){
       body.appendChild(block("stdout", '<pre class="log">' + escapeHtml(outcome.stdout) + "</pre>"));
     }
     if(outcome.stderr){
-      body.appendChild(block("stderr（清洗后的 traceback）",
-        '<pre class="log err">' + escapeHtml(outcome.stderr) + "</pre>"));
+      // 「警告」与「报错」用不同的标签与配色区分 —— 见 stderrLooksLikeError 的说明
+      const isError = stderrLooksLikeError(outcome);
+      body.appendChild(block(
+        isError ? "stderr（清洗后的 traceback）" : "stderr（警告，不是报错）",
+        '<pre class="log' + (isError ? " err" : " warn") + '">'
+          + escapeHtml(outcome.stderr) + "</pre>"));
     }
     if(outcome.hint){
       const hint = document.createElement("div");
