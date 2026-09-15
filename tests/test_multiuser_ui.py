@@ -180,6 +180,43 @@ def test_converged_pages_have_no_hardcoded_colors():
         )
 
 
+# ---------------------------------------------------------------- 控件配色覆盖
+
+_INPUT_TYPE_USED = re.compile(r'<input[^>]*type="([^"]+)"')
+_INPUT_TYPE_STYLED = re.compile(r'input\[type="([^"]+)"\]')
+_BROAD_INPUT_RULE = re.compile(r"(^|[\s,{])input\s*\{")
+_INPUT_TYPES_EXEMPT = {"hidden", "checkbox", "radio", "file", "range", "color"}
+"""这些类型按浏览器原生绘制即可，不该套文本输入框的底色与边框。"""
+
+
+@pytest.mark.parametrize("name", PAGES)
+def test_every_input_type_gets_the_control_styling(name):
+    """页面里用到的每种 input 类型都必须被配色规则覆盖，否则会露出浏览器默认白底。
+
+    2026-09-15 真实事故：`admin.html` 的控件规则是**枚举式白名单**
+    （`input[type="search"], input[type="text"], input[type="password"], select`），
+    而「新建账号」表单里的 `<input type="email">` 不在其中 —— 深色主题里就出现了一个
+    白底输入框，和周围格格不入。login / index 有宽选择器 `input { … }` 兜底，所以只有
+    admin 中招；这也说明**枚举式白名单本身**才是根因，故用这条守卫盯着它。
+
+    判据：要么页面存在宽选择器 `input{…}`，要么每种用到的类型都出现在
+    `input[type="…"]` 列表里。
+    """
+    html = read_page(name)
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
+    if _BROAD_INPUT_RULE.search(css):
+        return  # 有宽选择器兜底，任何类型都被覆盖
+
+    used = set(_INPUT_TYPE_USED.findall(html)) - _INPUT_TYPES_EXEMPT
+    styled = set(_INPUT_TYPE_STYLED.findall(css))
+    missing = sorted(used - styled)
+    assert not missing, (
+        f"{name}.html 里这些 input 类型没有配色规则：{missing} —— "
+        "它们会退回浏览器默认（白底 + 原生边框），在深色主题里非常扎眼。"
+        '把类型补进控件选择器（`input[type="…"]`），或改用一个宽选择器 `input { … }`。'
+    )
+
+
 # ---------------------------------------------------------------- 登录页
 
 
