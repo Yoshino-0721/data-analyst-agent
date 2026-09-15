@@ -154,6 +154,10 @@ class DockerExecutor:
     换来的是环境绝对干净，上一次运行不会以任何形式污染下一次。
     """
 
+    is_local = False
+    """执行器自述：容器模式（数据挂在 `/data`、工作目录 `/out`）。
+    与 `LocalSubprocessExecutor.is_local = True` 对应，供上层决定给模型的路径说法。"""
+
     def __init__(
         self,
         config: ExecutorConfig | None = None,

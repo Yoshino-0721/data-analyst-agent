@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 
 from .config import settings
+from .schema.extractor import mount_root_for_executor
 from .session import Session
 
 logger = logging.getLogger(__name__)
@@ -36,11 +37,19 @@ def user_root(user_id: int) -> Path:
 
 
 def get_workspace(user_id: int) -> Session:
-    """取该用户的工作区；不存在则按自己的目录建一个（Session 自带落盘恢复）。"""
+    """取该用户的工作区；不存在则按自己的目录建一个（Session 自带落盘恢复）。
+
+    建实例时按**当前执行器**传模型侧路径根：容器模式是 `/data/<name>`，
+    本地调试模式是裸文件名。与 ``user_root`` 同理，这里每次现读 ``settings``
+    —— 模式判断不能缓存，否则测试/切换执行器后给模型的路径还是旧的。
+    """
     with _lock:
         workspace = _registry.get(user_id)
         if workspace is None:
-            workspace = Session(user_root(user_id))
+            workspace = Session(
+                user_root(user_id),
+                model_mount_root=mount_root_for_executor(settings.executor),
+            )
             _registry[user_id] = workspace
             logger.info("已为用户 %s 创建工作区：%s", user_id, workspace.root)
         return workspace

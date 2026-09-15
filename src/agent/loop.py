@@ -95,9 +95,9 @@ def run_agent(
     if run_dir_factory is not None:
         runtime.run_dir_factory = run_dir_factory
 
-    tools = build_tool_schemas()
+    tools = build_tool_schemas(local=runtime.local_executor)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(schemas)},
+        {"role": "system", "content": build_system_prompt(schemas, local=runtime.local_executor)},
         {"role": "user", "content": question},
     ]
 

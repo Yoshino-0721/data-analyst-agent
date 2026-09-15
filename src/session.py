@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from .schema.extractor import DatasetSchema, SchemaError, extract_schema
+from .schema.extractor import (
+    CONTAINER_MOUNT_ROOT,
+    DatasetSchema,
+    SchemaError,
+    extract_schema,
+)
 from .sandbox.analysis import safe_target_name
 
 logger = logging.getLogger(__name__)
@@ -74,11 +79,11 @@ def _write_bytes_retry(path: Path, content: bytes, attempts: int = 6, backoff: f
     raise last
 
 
-def _extract_schema_retry(path: Path, attempts: int = 6, backoff: float = 0.2):
+def _extract_schema_retry(path: Path, mount_root: str, attempts: int = 6, backoff: float = 0.2):
     last: BaseException | None = None
     for i in range(attempts):
         try:
-            return extract_schema(path)
+            return extract_schema(path, mount_root=mount_root)
         except OSError as exc:  # 锁文件时 pandas 也会抛 OSError / PermissionError
             last = exc
             if not _is_transient_lock(exc) or i == attempts - 1:
@@ -139,6 +144,13 @@ class Session:
     """一次会话的全部状态。"""
 
     root: Path
+    model_mount_root: str = CONTAINER_MOUNT_ROOT
+    """模型侧的数据路径根（`mount_root_for_executor(settings.executor)`）。
+
+    默认是容器语义，只有显式传 `""` 才是「文件就在工作目录」的本地调试模式。
+    建工作区的调用方（`workspaces.get_workspace`）必须按当前执行器传进来 ——
+    把它写死成 `/data` 正是 2026-09-15 那次「模型读不到文件、满盘找、超时」的根因。
+    """
     files: list[Path] = field(default_factory=list)
     schemas: list[DatasetSchema] = field(default_factory=list)
     last_error: str = ""
@@ -164,7 +176,7 @@ class Session:
             if path.suffix.lower() not in ALLOWED_SUFFIXES:
                 continue
             try:
-                schema = extract_schema(path)
+                schema = extract_schema(path, mount_root=self.model_mount_root)
             except SchemaError as exc:
                 logger.warning("恢复数据文件失败（跳过）：%s（%s）", name, exc)
                 continue
@@ -237,7 +249,7 @@ class Session:
                     _write_bytes_retry(temp, content)
                     incoming.append((temp, final))
                     # 校验能读：这一步失败说明文件本身有问题，改名不该发生
-                    _extract_schema_retry(temp)
+                    _extract_schema_retry(temp, self.model_mount_root)
 
                 # 全部通过 —— 改名到位（os.replace 覆盖已存在的同名文件）
                 previous = list(self.files)
@@ -256,7 +268,10 @@ class Session:
 
                 self.files = new_files
                 # 以**正式路径**重建 Schema —— 临时文件名不能出现在给模型的路径里
-                self.schemas = [extract_schema(path) for path in self.files]
+                self.schemas = [
+                    extract_schema(path, mount_root=self.model_mount_root)
+                    for path in self.files
+                ]
                 self.last_error = ""
             finally:
                 # 只在失败路径上还有残留（成功时 incoming 已被清空）

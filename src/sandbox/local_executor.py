@@ -74,6 +74,11 @@ class RunOutcome:
 class LocalSubprocessExecutor:
     """在宿主机上直接执行代码。**生产环境禁用。**"""
 
+    is_local = True
+    """执行器自述：本机模式。上层（提示词/工具说明书）据此决定给模型的路径说法 ——
+    容器里是 `/data` + `/out`，本机模式下两者都不存在，文件被复制进工作目录。
+    这个标记必须留在执行器身上：真正跑代码的是它，模式判断只该有一处。"""
+
     def __init__(
         self,
         config: ExecutorConfig | None = None,

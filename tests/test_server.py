@@ -17,6 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src import server as server_module
+from src.config import settings
+from src.schema.extractor import mount_root_for_executor
 from src.session import Session
 from tests.conftest_agent import (
     ScriptedClient,
@@ -128,7 +130,12 @@ class TestUpload:
     def test_returns_schema_summary(self, loaded_client):
         data = loaded_client.get("/api/workspace").json()
         file_info = data["files"][0]
-        assert file_info["path"] == "/data/销售.csv", "必须是容器内路径"
+        # 模型侧路径跟随执行器模式：容器里是 `/data/<name>`，本地调试模式下数据被复制
+        # 进工作目录、模型看到的就是文件名。原先这里无条件写死 `/data/`，
+        # 那正是 2026-09-15「模型拿 /data/xxx 去读、必 FileNotFoundError」的同一个误解
+        # —— 见 tests/test_local_mode_paths.py。
+        root = mount_root_for_executor(settings.executor)
+        assert file_info["path"] == (root + "/" if root else "") + "销售.csv"
         assert [c["name"] for c in file_info["columns"]] == ["地区", "销售额"]
 
     def test_replaces_previous_files(self, loaded_client):

@@ -30,34 +30,59 @@ logger = logging.getLogger(__name__)
 RUN_PYTHON = "run_python"
 GET_SCHEMA = "get_schema"
 
+LOCAL_MODE_HINT = (
+    "\n注意：当前运行在**本机调试模式**（没有容器挂载，也没有 `/data`、`/out`）—— "
+    "数据文件就在你的工作目录里，直接用文件名读取（如 `pd.read_excel('销售.xlsx')`）；"
+    "写文件也用相对路径。**不要用 `os.walk('/')` 之类的方式满盘找文件**："
+    "本机模式下那会扫到整个磁盘，既慢又会撞上执行超时。"
+)
+
 
 # ------------------------------------------------------------------ 说明书
 
 
-def build_tool_schemas() -> list[dict[str, Any]]:
+def build_tool_schemas(*, local: bool = False) -> list[dict[str, Any]]:
     """给模型的 JSON Schema。
 
     注意 description 的写法：**先说清楚能做什么，再划出红线**。
     模型对「不要做什么」的遵守度，取决于它是否知道替代方案 ——
     所以每条禁令后面都给了该怎么做。
+
+    Args:
+        local: 本地调试执行器模式。数据路径的说法必须跟着执行器走：
+            容器里是 `/data` + 工作目录 `/out`，本地模式下两者都不存在，
+            文件被复制进工作目录、用相对名读。2026-09-15 的事故就是
+            「提示说 /data、实现放工作目录」，模型第一次读必失败。
     """
+    # 第 2 条规则是**唯一**随模式变化的措辞：容器里工作目录就是 /out，
+    # 本机模式下没有这个绝对路径。用三元式显式拼，不做「替换自己的字符串」
+    # —— 那种写法一旦原文改了就静默不命中，正好是 §5.1 记过的坑。
+    work_dir_rule = (
+        "2. 工作目录是你唯一可写的地方 —— 直接用相对路径写文件"
+        "（如 plt.savefig('chart.png')）；\n"
+        if local
+        else "2. 工作目录就是 /out —— 直接用相对路径写文件"
+        "（如 plt.savefig('chart.png')），只有 /out 可写；\n"
+    )
+    run_python_description = (
+        "在隔离沙箱里执行一段 Python 代码，用于读取和分析数据。\n"
+        "环境里有 pandas / numpy / matplotlib / openpyxl，**没有网络**。\n"
+        "规则：\n"
+        "1. 数据文件的路径请**照抄**系统提示里给出的那个，不要自行猜测或拼接其它路径；\n"
+        + work_dir_rule
+        + "3. 用 print() 输出关键结论，只有 stdout 会回传给你；\n"
+        "4. 不要用 subprocess / socket / requests / os.system，也不要读写数据文件与工作目录之外的路径；\n"
+        "5. 中文输出正常，无需额外设置编码。"
+    )
+    if local:
+        run_python_description += LOCAL_MODE_HINT
+
     return [
         {
             "type": "function",
             "function": {
                 "name": RUN_PYTHON,
-                "description": (
-                    "在隔离沙箱里执行一段 Python 代码，用于读取和分析数据。\n"
-                    "环境里有 pandas / numpy / matplotlib / openpyxl，**没有网络**。\n"
-                    "规则：\n"
-                    "1. 数据文件在 /data 下且只读，路径请**照抄**系统提示中给出的文件路径，"
-                    "不要自行猜测或拼接其它路径；\n"
-                    "2. 工作目录就是 /out —— 直接用相对路径写文件即可（如 plt.savefig('chart.png')），"
-                    "只有 /out 可写；\n"
-                    "3. 用 print() 输出关键结论，只有 stdout 会回传给你；\n"
-                    "4. 不要用 subprocess / socket / requests / os.system，也不要读写 /data 与 /out 之外的路径；\n"
-                    "5. 中文输出正常，无需额外设置编码。"
-                ),
+                "description": run_python_description,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -164,6 +189,16 @@ class ToolRuntime:
 
     def __post_init__(self) -> None:
         self._by_name = {schema.file_name: schema for schema in self.schemas}
+
+    @property
+    def local_executor(self) -> bool:
+        """当前执行器是不是本地调试模式（决定提示词里的路径说法）。
+
+        问**执行器自己**，不问配置：真正跑代码的是它，模式判断只有一处。
+        测试里的桩执行器没有 `is_local`，一律按容器语义处理 ——
+        这正是既有断言（含 `/data/...`）继续成立的原因。
+        """
+        return bool(getattr(self.executor, "is_local", False))
 
     def execute(self, call: Any) -> ToolOutcome:
         """执行一个工具调用。**任何异常都不该让循环崩掉**。"""
@@ -312,6 +347,7 @@ def _fmt(value: Any) -> str:
 
 __all__ = [
     "GET_SCHEMA",
+    "LOCAL_MODE_HINT",
     "RUN_PYTHON",
     "ToolOutcome",
     "ToolRuntime",

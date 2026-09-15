@@ -46,16 +46,46 @@ import pandas as pd
 from ..sandbox.analysis import safe_target_name
 
 __all__ = [
+    "CONTAINER_MOUNT_ROOT",
+    "LOCAL_MOUNT_ROOT",
     "ColumnSchema",
     "DatasetSchema",
     "SchemaError",
     "UnsupportedFileError",
     "extract_schema",
     "extract_schemas",
+    "mount_root_for_executor",
     "schemas_to_prompt_string",
 ]
 
 # ------------------------------------------------------------------ 可调常量
+
+CONTAINER_MOUNT_ROOT = "/data"
+"""模型侧的数据目录（Docker 模式）：容器里的只读挂载点。"""
+
+LOCAL_MOUNT_ROOT = ""
+"""模型侧的数据目录（本地调试模式）：空前缀 —— 数据被复制进工作目录，
+模型直接用**文件名**读（`pd.read_excel('销售.xlsx')`）。
+
+本地执行器没有 `/data` 这个绝对路径（`local_executor._prepare` 只往工作目录里
+复制一份）。2026-09-15 的真实事故就是这么来的：提示词照旧说「必须用
+`/data/xxx.xlsx`」，模型第一次读必 `FileNotFoundError`，接着花 4 步找文件
+（其中 `os.walk('/')` 满盘扫描撞上 30 秒超时），8 步预算烧光。
+"""
+
+
+def mount_root_for_executor(executor: str) -> str:
+    """按执行器模式给出**模型侧**的数据路径根 —— 这里是唯一真相来源。
+
+    调用方（工作区建 Schema、提示词渲染）一律用它，不要各自判断模式：
+    路径说法与「执行器实际把文件放在哪」必须由同一个函数决定，否则就是
+    「提示说 /data、实现放工作目录」这类自相矛盾，而它只会在模型第一次
+    读文件时以 FileNotFoundError 的形式暴露。
+
+    认不出来的一律按容器算：宁可多一个 `/data` 前缀，也不能把生产模式
+    悄悄降级成「相对当前工作目录」。
+    """
+    return LOCAL_MOUNT_ROOT if executor == "local" else CONTAINER_MOUNT_ROOT
 
 SAMPLE_ROWS = 5
 """采样行数。**这是上限，不是建议值** —— 采样只用于让模型看懂形态。"""
@@ -163,11 +193,12 @@ class DatasetSchema:
     """原始文件名。用于在 Prompt 里称呼它。"""
 
     data_path: str
-    """**容器内**的路径，形如 `/data/sales.csv`。
+    """**模型侧**的路径 —— Docker 模式形如 `/data/sales.csv`，本地调试模式就是
+    `sales.csv`（数据被复制进工作目录，没有 `/data` 这个绝对路径）。
 
-    这是给模型用的路径，不是宿主的 `D:\\...\\sales.csv`。
-    容器内文件名由 `safe_target_name()` 归一化得到，与执行层挂载时用的
-    是同一套规则，保证模型拼出的路径一定打得开。
+    由 `mount_root_for_executor()` 按执行器模式决定，绝不是宿主的
+    `D:\\...\\sales.csv`。文件名由 `safe_target_name()` 归一化得到，与执行层
+    复制数据时用的是同一套规则，保证模型照抄的路径一定打得开。
     """
 
     n_rows: int
@@ -195,15 +226,18 @@ class DatasetSchema:
 def extract_schema(
     path: str | Path,
     *,
-    mount_root: str = "/data",
+    mount_root: str = CONTAINER_MOUNT_ROOT,
     sample_rows: int = SAMPLE_ROWS,
 ) -> DatasetSchema:
     """提取单份数据文件的 Schema。
 
     Args:
         path: 宿主机上的文件路径。
-        mount_root: 数据在**容器内**的挂载目录。DockerExecutor 用 `/data`；
-            本地调试执行器没有挂载概念，传 `""` 得到相对路径。
+        mount_root: 模型侧的数据路径根 —— **不要在这里写死**，一律用
+            `mount_root_for_executor(settings.executor)`：Docker 得到 `/data/x.csv`，
+            本地调试执行器得到相对名 `x.csv`（它没有挂载概念）。
+            默认值保持容器语义，是为了让「不关心模式」的直接调用（含单元测试）
+            拿到稳定结果；走真实工作区的调用点必须显式传。
         sample_rows: 采样行数，默认 5。
     """
     source = Path(path)
@@ -231,13 +265,13 @@ def extract_schema(
 def extract_schemas(
     paths: Iterable[str | Path],
     *,
-    mount_root: str = "/data",
+    mount_root: str = CONTAINER_MOUNT_ROOT,
     sample_rows: int = SAMPLE_ROWS,
 ) -> list[DatasetSchema]:
     """批量提取，并**提前发现文件名冲突**。
 
     冲突必须在这一步就报出来：两个文件归一化后同名（例如 `a/销售.csv` 与
-    `b/销售.csv`），容器里后一个会覆盖前一个，而模型拿到的路径却指向同一处。
+    `b/销售.csv`），模型侧后一个会覆盖前一个，而模型拿到的路径却指向同一处。
     这类 bug 极难排查（表现为「数据突然少了一半」），宁可早失败。
     """
     schemas: list[DatasetSchema] = []
@@ -247,10 +281,11 @@ def extract_schemas(
         source = Path(raw)
         name = safe_target_name(source)
         if name in taken and taken[name] != str(source):
+            shown = f"{mount_root.rstrip('/')}/{name}" if mount_root else name
             raise SchemaError(
                 f"文件名冲突：\n  {taken[name]}\n  {source}\n"
-                f"两者在容器内都会变成 {mount_root.rstrip('/')}/{name}，"
-                "后挂载的会覆盖前一个。请改名后再上传。"
+                f"两者在模型看到的数据目录里都会变成 {shown}，"
+                "后一个会覆盖前一个。请改名后再上传。"
             )
         taken[name] = str(source)
         schemas.append(extract_schema(source, mount_root=mount_root, sample_rows=sample_rows))
@@ -529,7 +564,7 @@ def _render_schema(schema: DatasetSchema) -> str:
     reader = _READ_HINT.get(suffix, "pd.read_csv")
 
     lines.append(f"### {schema.file_name}")
-    lines.append(f"- 容器内路径：`{schema.data_path}`（**代码里必须用这个路径**）")
+    lines.append(f"- 数据文件路径：`{schema.data_path}`（**代码里必须原样用这个路径**）")
     lines.append(f"- 规模：{schema.n_rows} 行 × {schema.n_cols} 列")
     lines.append(f"- 读取方式：`{reader}('{schema.data_path}')`")
 
@@ -595,10 +630,10 @@ def _render_table(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
 
 
 def _container_path(source: Path, mount_root: str) -> str:
-    """宿主路径 → 容器内路径。
+    """宿主路径 → 模型侧路径（`mount_root` 为空时就是文件名本身）。
 
-    文件名归一化必须与执行层挂载时用同一套规则（`safe_target_name`），
-    否则模型拼出的路径在容器里打不开。
+    文件名归一化必须与执行层复制数据时用同一套规则（`safe_target_name`），
+    否则模型照抄的路径打不开。
     """
     name = safe_target_name(source)
     root = (mount_root or "").rstrip("/")
