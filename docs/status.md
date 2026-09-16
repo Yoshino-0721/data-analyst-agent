@@ -6,16 +6,16 @@
 ## 0. 一句话现状
 
 两个仓库都已完成「多用户团队平台改造 + 设计令牌 pass 1 与 pass 2 + E2E 真实闭环 +
-T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现的三处缺陷（见落地记录末行）」，
+T5/R4/T1/R3/T2/T7/R2/T9 八条最小修复 + 第二个项目演示期实测发现的三处缺陷（见落地记录的「演示期新发现的三处缺陷」行）」，
 测试全绿，工作区干净，**两个仓库都已 push 到 `origin`**（2026-09-16）；整仓 bundle 备份在 `D:\代码项目\_backup\`。
 剩下的是 `docs/optimization-backlog.md` 里的其余条目（T3/T4/T6/T8、R1/R5、U1–U4、N1、N2）；
 **模块 13（工作区迁移）已决定取消、不执行**（2026-09-14，理由见下方表格后的说明）。
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `b3f63ef` | `master` `bc09e86` |
-| 测试 | **492 通过** | **715 通过**（17 deselected，Docker 集成默认跳过） |
-| 远程 | `origin` = github.com/Yoshino-0721/**rag-knowledge-base**.git，**已 push**：`refs/heads/main` = `b3f63ef`（`ls-remote` 回读核对过，与本地逐字一致） | `origin` = github.com/Yoshino-0721/**data-analyst-agent**.git，**已 push**：`refs/heads/master` = `bc09e86`（同样回读核对）。Q1 已结：两边建的都是空仓库，首次推送即建分支。**仍一律不用 `--force`** |
+| 分支 / HEAD | `main` `07e1440`（T9 修复） | `master` `e028a00` |
+| 测试 | **507 通过** | **715 通过**（17 deselected，Docker 集成默认跳过） |
+| 远程 | `origin` = github.com/Yoshino-0721/**rag-knowledge-base**.git，**已 push**：`refs/heads/main` 回读 = 本次推送后的 HEAD（= T9 修复 `07e1440` + 一条 `docs:` 记账提交，见 §6.1 的例外） | `origin` = github.com/Yoshino-0721/**data-analyst-agent**.git，**已 push**：`refs/heads/master` 回读 = 本次推送后的 HEAD（= `e028a00` + 一条 `docs:` 记账提交）。Q1 已结：两边建的都是空仓库，首次推送即建分支。**仍一律不用 `--force`** |
 | 端口 | 8000 | 8123 |
 
 > ✅ `.git` 不再是唯一副本：两个仓库都已 push 到 GitHub（2026-09-16），远端有了第二份历史。
@@ -47,6 +47,7 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现�
 | T2 | 上传落盘改原子写（同目录 `.incoming` + `os.replace`，**不涉及删除** —— 本机删除有钩子）；文件名归一化复用 `src/paths.py:safe_target_name`（全仓只留一处实现） |
 | T7 | 重置口令两条路径一律置 `must_change_password=True`（**刻意不做强度校验**：边界在闸门上，"管理员下发口头临时码"是合理场景）；前端重置抽屉补了提示文案 |
 | R2 | 未预期异常统一「固定文案 + 请求 id」（细节只进日志）：p1 从 21 字节纯文本升级为 JSON，p2 去掉异常细节泄露。第 1 条先落 `src/request_id.py` 机制（两仓库逐字相同），第 2 条再动错误结构 |
+| T9 | 启动期向量对账（`src/reconcile.py`）：清掉「清单里没有、向量库里还留着」的 `source` 并打警告日志（接在 lifespan 的 `init_db()` 之后，单账号失败只记日志、绝不让启动失败）；`src/store.py` 新增 `existing_collection()` —— 对账只看不建集合。`docs/DEPLOY.md` 新增「清库清单」，把 `storage/chroma.sqlite3` 补进必删项。真机验证清掉 2 个幽灵 |
 
 ## 2. 未完成与已结清（✅ / 🚫 开头的条目已结清，原文留档）
 
@@ -103,7 +104,7 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现�
    若不认可，用户会指出是"间距"还是"字号"哪一类 —— **只回退那一类**即可。
 
 2. **模块 12 剩余条目**：`docs/optimization-backlog.md` 里 **T3/T4/T6/T8、R1/R5、
-   U1–U4、N1、N2** 还没做（T2/T5/T7/R2/R3/R4 已完成，逐条证据见该文件的「落地记录」；
+   U1–U4、N1、N2** 还没做（T2/T5/T7/T9/R2/R3/R4 已完成，逐条证据见该文件的「落地记录」；
    N2「hint 细化分类」**已明确不做**，只留作可选）。
    **下一批候选：U2 → U4**（用户已点名，非必须；模块 13 取消后已无前置）。
 3. 🚫 **模块 13（工作区迁移）—— 已取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
@@ -231,7 +232,7 @@ powershell -ExecutionPolicy Bypass -File scripts/e2e_real.ps1 -Project p1
    全是 `docs:` 前缀、只动了本文档，那也算一致（文档自己每改一次就会推进一次 HEAD，
    否则这份自检清单会自我失效）。其余情况一律先读新 commit，别按旧状态动手。
 2. **对环境**：在各自仓库根目录跑一次全量测试（命令见 §4）—— 数字应当与 §0 一致
-   （p1 492 / p2 715）。不一致说明代码或环境已经漂移，先查清楚再改，别在不确定的
+   （p1 507 / p2 715）。不一致说明代码或环境已经漂移，先查清楚再改，别在不确定的
    基线上做改动。
 3. **对约定**：**先读 `AGENTS.md`，再读本文档** —— 两份合起来才完整：
    `AGENTS.md` 说"不许做什么、为什么"（架构决策 + 硬约束 + 踩过的坑），
