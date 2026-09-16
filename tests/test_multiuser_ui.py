@@ -339,6 +339,22 @@ def test_index_keeps_its_existing_element_ids():
         assert f'id="{element_id}"' in html, f"工作台丢了既有元素 #{element_id}"
 
 
+def test_index_has_admin_entry_that_only_admins_see():
+    """管理员登录后必须能回到 /admin —— 否则进了工作台就被困住了。
+
+    2026-09-15 缺陷：工作台账号区只有「改密 / 登出」，管理员没有回后台的入口。
+    修法三条约束：
+    ① 用 `<a href="/admin">` 做**页面跳转**，不是 apiFetch（那是取数据）；
+    ② 默认 `hidden`，普通用户看不到；
+    ③ 由 `/api/auth/me` 的 role 决定显隐（renderUserBadge 里跟着 role 一起切）。
+    """
+    html = read_page("index")
+    assert 'id="adminLink"' in html, "工作台缺少回管理后台的入口"
+    assert 'href="/admin"' in html, "入口必须是页面跳转（<a href>），不是 apiFetch"
+    assert '<a class="mini" id="adminLink" href="/admin" hidden>' in html, "默认应当是隐藏的"
+    assert 'el.adminLink.hidden = user.role !== "admin"' in html, "显隐必须跟 role 走"
+
+
 def test_index_has_account_actions():
     html = read_page("index")
 

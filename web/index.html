@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>私人数据分析师 Agent</title>
+<title>数据分析 Agent</title>
 <style>
 :root{
   --bg:#eef1f8;
@@ -267,6 +267,7 @@ main{
   background:var(--surface-2);
 }
 .block-label .spacer{flex:1}
+a.mini{text-decoration:none}
 .mini{
   border:1px solid var(--border-strong);background:var(--surface);border-radius:var(--radius-sm);
   padding:var(--space-1) var(--space-4);font-size:var(--fs-xs);color:var(--text-2);font-weight:600;transition:.14s;
@@ -359,7 +360,7 @@ pre.log.closed{display:none}
       </svg>
     </span>
     <div class="brand-text">
-      <h1>私人数据分析师 Agent</h1>
+      <h1>数据分析 Agent</h1>
       <span class="sub">模型自写代码 · 本地执行 · 结果可追溯</span>
     </div>
   </div>
@@ -367,6 +368,9 @@ pre.log.closed{display:none}
   <span class="status-pill" id="env-status"><span class="dot" id="env-dot"></span><span id="env-text">检测中…</span></span>
   <span class="account">
     <span id="userBadge"></span>
+    <!-- 管理员回后台的入口：普通用户看不到（renderUserBadge 里按 role 显隐）。
+         必须是 <a href> 页面跳转，不是 apiFetch。 -->
+    <a class="mini" id="adminLink" href="/admin" hidden>管理后台</a>
     <button class="mini" id="changePwdBtn" type="button">修改密码</button>
     <button class="mini" id="logoutBtn" type="button">登出</button>
   </span>
@@ -611,6 +615,7 @@ const el = {
   sessionList: document.getElementById("sessionList"),
   newSessionBtn: document.getElementById("newSessionBtn"),
   userBadge: document.getElementById("userBadge"),
+  adminLink: document.getElementById("adminLink"),
   changePwdBtn: document.getElementById("changePwdBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   pwdOverlay: document.getElementById("pwdOverlay"),
@@ -1142,6 +1147,8 @@ async function ask(question){
 
 function renderUserBadge(){
   const user = state.user || cachedUser() || {};
+  // 回管理后台的入口只给管理员：普通用户点进去也是一页 403
+  el.adminLink.hidden = user.role !== "admin";
   if(!user.username){ el.userBadge.textContent = ""; return; }
   el.userBadge.innerHTML = "<b>" + escapeHtml(user.username) + "</b> · "
     + escapeHtml(user.role === "admin" ? "管理员" : "用户");
