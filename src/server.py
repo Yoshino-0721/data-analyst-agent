@@ -79,7 +79,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="私人数据分析师 Agent",
+    title="数据分析 Agent",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,

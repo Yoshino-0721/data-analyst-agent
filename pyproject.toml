@@ -1,7 +1,7 @@
 [project]
 name = "data-analyst-agent"
 version = "0.1.0"
-description = "基于 Function Calling 的私人数据分析师 Agent（沙箱执行层）"
+description = "基于 Function Calling 的数据分析 Agent（沙箱执行层）"
 requires-python = ">=3.13"
 # 注意：pandas 只在**宿主侧**用于 Schema 提取；沙箱镜像里另有一份
 # （见 src/sandbox/image/Dockerfile），两边版本不必强一致。

@@ -113,7 +113,7 @@ class TestIndex:
     def test_serves_page(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "私人数据分析师" in resp.text
+        assert "数据分析 Agent" in resp.text
 
 
 # ------------------------------------------------------------------ 上传

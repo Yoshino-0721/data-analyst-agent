@@ -1,6 +1,6 @@
 # Executor 抽象接口设计
 
-> 第二个项目：基于 Function Calling 的「私人数据分析师」Agent
+> 第二个项目：基于 Function Calling 的「数据分析 Agent」
 > 本文档给出执行层的接口契约。**先定契约，再写实现** —— 契约稳定之后，
 > Docker 实现与本地实现可以并行推进，测试也能用桩对象提前写完。
 

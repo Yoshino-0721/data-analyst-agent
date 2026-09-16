@@ -1,4 +1,4 @@
-# 私人数据分析师 Agent
+# 沙箱隔离的数据分析 Agent
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/沙箱-Docker%20隔离-2496ED?logo=docker&logoColor=white)
