@@ -13,6 +13,10 @@ dependencies = [
     # 恰好装过才跑得起来，换台机器 clone 下来就装不全。既然要声明就一次说清，
     # 免得下次又漏一个。版本下限取「当前实际可用的老版本」，不锁死。
     "fastapi>=0.110",   # src/server.py 的 Web 服务框架
+    # /api/upload 用 File(...) 收文件 —— 它不是 import 出来的依赖，但 FastAPI
+    # 在**注册路由**时就要求装好，缺了直接抛 RuntimeError、服务起不来。
+    # 开发机上因为别处装过所以测试全绿，换台干净机器必炸，故在此显式声明。
+    "python-multipart>=0.0.9",
     "uvicorn>=0.27",    # 启动 ASGI 服务的入口（README 里的 uvicorn 命令）
     "openai>=1.0",      # src/llm/client.py 里 ZhipuClient 走 OpenAI 兼容协议
     "httpx>=0.27",      # openai SDK 的 HTTP 底座；脚本里也直接用它探接口
