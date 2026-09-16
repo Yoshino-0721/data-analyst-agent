@@ -16,6 +16,15 @@
 
 FROM python:3.13-slim
 
+# pip 源可在构建时覆盖，避免卡死在国内服务器上访问 pypi.org：
+#   docker build --build-arg PIP_INDEX_URL=http://mirrors.tencentyun.com/pypi/simple \
+#                --build-arg PIP_TRUSTED_HOST=mirrors.tencentyun.com -t data-analyst-sandbox:latest .
+# 不传这两个参数时行为与原来完全一致（走 PyPI 默认源）。
+ARG PIP_INDEX_URL
+ARG PIP_TRUSTED_HOST
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+
 # 中文字体（fonts-noto-cjk）。端到端实测发现：没装它时 matplotlib 画中文
 # 全是方块，模型得花一轮去排查字体、再把图表标签换成英文 —— 用户看到的
 # 图就永远是英文。装上字体把这个坑从根上填掉。
