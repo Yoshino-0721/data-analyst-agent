@@ -7,19 +7,20 @@
 
 两个仓库都已完成「多用户团队平台改造 + 设计令牌 pass 1 与 pass 2 + E2E 真实闭环 +
 T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现的三处缺陷（见落地记录末行）」，
-测试全绿，工作区干净，**从未 push**；整仓 bundle 备份已放在 `D:\代码项目\_backup\`。
+测试全绿，工作区干净，**两个仓库都已 push 到 `origin`**（2026-09-16）；整仓 bundle 备份在 `D:\代码项目\_backup\`。
 剩下的是 `docs/optimization-backlog.md` 里的其余条目（T3/T4/T6/T8、R1/R5、U1–U4、N1、N2）；
 **模块 13（工作区迁移）已决定取消、不执行**（2026-09-14，理由见下方表格后的说明）。
 
 | | rag-knowledge-base（p1） | data-analyst-agent（p2） |
 |---|---|---|
-| 分支 / HEAD | `main` `23f45b1` | `master` `efe7957` |
+| 分支 / HEAD | `main` `b3f63ef` | `master` `bc09e86` |
 | 测试 | **492 通过** | **715 通过**（17 deselected，Docker 集成默认跳过） |
-| 远程 | 配了 `origin`（github.com/Yoshino-0721/rag-knowledge-base）但**从未 push**；Q1（远端是否已有内容）等网络恢复后 `git ls-remote --heads origin` 核实：空则推、有内容则停下来给用户看 | remote 待加：`https://github.com/Yoshino-0721/data-analyst-agent.git`（用户建好空仓库后执行 `git remote add`）。**两仓库一律不用 `--force`** |
+| 远程 | `origin` = github.com/Yoshino-0721/**rag-knowledge-base**.git，**已 push**：`refs/heads/main` = `b3f63ef`（`ls-remote` 回读核对过，与本地逐字一致） | `origin` = github.com/Yoshino-0721/**data-analyst-agent**.git，**已 push**：`refs/heads/master` = `bc09e86`（同样回读核对）。Q1 已结：两边建的都是空仓库，首次推送即建分支。**仍一律不用 `--force`** |
 | 端口 | 8000 | 8123 |
 
-> ⚠️ `.git` 是历史孤本。任何迁移/清理前先 `git bundle create --all`（见
-> `docs/migration-plan.md` 的 Phase 0.4）。
+> ✅ `.git` 不再是唯一副本：两个仓库都已 push 到 GitHub（2026-09-16），远端有了第二份历史。
+> 迁移/清理前**仍**建议先 `git bundle create --all`（见 `docs/migration-plan.md` 的 Phase 0.4）——
+> 远端是"另一台机器上的副本"，不是"不会被误删的副本"。
 
 > 🚫 **模块 13（工作区迁移）= 取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
 > 风险是 `.git` 历史孤本（两个仓库**从未 push**；p1 那个 `origin` 从未 fetch 过；
@@ -106,8 +107,9 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现�
    N2「hint 细化分类」**已明确不做**，只留作可选）。
    **下一批候选：U2 → U4**（用户已点名，非必须；模块 13 取消后已无前置）。
 3. 🚫 **模块 13（工作区迁移）—— 已取消，不执行（2026-09-14 决策）**：收益只是路径整洁，
-   风险是 `.git` 历史孤本（两个仓库**从未 push**；当时本机网络不可达，`git ls-remote`
-   核不了 Q1），而 `D:\代码项目\` 现状完全可用 —— 不值得为"好看"冒历史丢失的风险。
+   风险是 `.git` 历史孤本（**做这个决策时两个仓库都还没 push**、本机网络也不可达，
+   `git ls-remote` 核不了 Q1；后于 2026-09-16 才推送成功），而 `D:\代码项目\` 现状完全可用 ——
+   不值得为"好看"冒历史丢失的风险。
    `docs/migration-plan.md` **保留作参考、不删**（它写的是"若要迁移该怎么做"，不是待办）；
    将来真要迁，仍按它 Phase 0.4 先 `git bundle create --all`。
 4. ✅ **R2 第 2 条（错误结构）—— 已完成（2026-09-14）**：两项目统一「固定中文文案 +
@@ -136,7 +138,10 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现�
 
 ### 3.2 硬约束（详见两份 AGENTS.md）
 
-- 每次改动**必须**提交，且提交前**全量 pytest 全绿**；只提交、**绝不 push**。
+- 每次改动**必须**提交，且提交前**全量 pytest 全绿**。
+- **push 由用户拍板**：2026-09-16 起两个仓库都已推到 `origin`（`main` / `master`）。
+  推送前仍要先跑全量 + `git bundle create --all` 备份，且**永不用 `--force`**；
+  远端有内容就停下来给用户看，不要强推。
 - commit message 只用 `feat` / `fix` / `docs` 前缀。
 - 不引 LangChain / LangGraph（手写 FC 循环）；前端零 CDN、自包含。
 - **绝不无差别杀进程**：只按记录的 PID / 专属 profile 过滤，执行前先列清单。
@@ -169,6 +174,23 @@ T5/R4/T1/R3/T2/T7/R2 七条最小修复 + 第二个项目演示期实测发现�
   "不会留下坏中间态"的顺序写（先改被调方还是调用方，先想清楚）。
 - Edge 在会话中运行时，headless 的 `--dump-dom`/`--screenshot` 不产出文件 →
   **像素级目视验收我这边做不了**，只能用静态+行为断言替代，并如实标注 SKIP。
+- **推 GitHub 要绕开 schannel 的吊销检查**（2026-09-16 实测）：直接 `git push` 报
+  `schannel: next InitializeSecurityContext failed: CRYPT_E_NO_REVOCATION_CHECK`；
+  而 `-c http.schannelCheckRevoke=false` 在 git 2.55.0.windows.3 上**不生效**。
+  可用做法（**证书仍完整校验**，只是换后端）：
+  ```powershell
+  $pem = "$env:TEMP\dsh-scratch\windows-roots.pem"   # Windows 根证书库导出的 PEM（114 张）
+  git -c http.sslBackend=openssl -c http.sslCAInfo=$pem push -u origin <branch>
+  ```
+- **凭据**：本机 `credential.helper=helper-selector`（GCM）里那份 github 凭据是无效的，
+  直接推会得到 `remote: Invalid username or token`。`gh auth setup-git` 在本机**漏装**了
+  per-host helper（实测配置里只有 `helper-selector`/`manager`）。临时接上 gh 的助手：
+  ```powershell
+  $env:GIT_CONFIG_COUNT='1'
+  $env:GIT_CONFIG_KEY_0='credential.https://github.com.helper'
+  $env:GIT_CONFIG_VALUE_0='!"C:/Program Files/GitHub CLI/gh.exe" auth git-credential'
+  ```
+  （`gh auth login` 已登录时这样即可静默推送；两仓库现已 `-u` 跟踪到 `origin`。）
 
 ## 4. 怎么跑
 
